@@ -1,12 +1,35 @@
 # JPhotoTagger SaaS Conversion Design
 
-**Date:** 2026-02-24
-**Version:** 3.0
+**Date:** 2026-02-25
+**Version:** 4.0
 **Status:** Approved
 
 ---
 
 ## Changelog
+
+### v4.0 — 2026-02-25
+
+Revisions following Security Audit v1 and Critical Design Review v4:
+
+- **[SA#1/CR#2.1] Nginx rate-limit zone placement:** Moved `limit_req_zone` directives from `server {}` to `http {}` context — zones are only valid in `http {}`. Added `nginx -t` config validation to CI pipeline.
+- **[SA#2] MinIO proxy access control:** MinIO bucket policy documented as **private** (hard requirement); added `proxy_set_header Authorization ""` to strip ambient credentials; added regex path guard constraining valid `/photos/` paths to `/{user_id}/(originals|thumbnails)/{photo_id}`.
+- **[SA#3] Backup deletion propagation:** Removed `--remove` from `mc mirror`; enabled B2 Object Lock (immutable retention) on backup bucket; backup sidecar uses separate B2 credentials with write-only (no delete) permissions; added monitoring alert on bulk MinIO delete operations.
+- **[SA#4] Redis healthcheck password:** Replaced `redis-cli -a` with `REDISCLI_AUTH` environment variable to avoid password exposure in process args and `docker inspect`.
+- **[SA#5/CR#2.2] pgbackup container:** Replaced runtime `apt-get install` with custom Docker image (`FROM postgres:16` + pre-installed, version-pinned restic); added top-level `secrets:` definition for `restic_pass`; documented secret provisioning; added `restic forget --prune` to backup loop.
+- **[SA#6] Password policy:** Specified minimum 12-character password length, bcrypt cost factor >= 12, account lockout after 5 failed attempts.
+- **[SA#7] JWT secret management:** Specified HS256 with >= 256-bit key, documented key generation (`openssl rand -base64 64`), documented key rotation procedure.
+- **[SA#8] Share link expiry:** Changed default from `NULL` (permanent) to 30-day expiry; users can explicitly create permanent links; added "Manage Shares" UI to Phase 5.
+- **[SA#9] EXIF GPS in shares:** GPS coordinates stripped from EXIF data served via public share links by default; per-share opt-in for including location; user-level setting to control GPS display.
+- **[SA#10] ExifTool injection prevention:** Specified `ProcessBuilder` with explicit argument arrays (no shell); files referenced by UUID storage keys only (never original filenames); added `read_only: true` + `tmpfs` working directory to worker container.
+- **[SA#11/CR#3] CI/CD integrity:** Added artifact signing (JAR + React bundle) in CI with VPS verification; dedicated SSH deploy key; post-deploy healthcheck with rollback; clarified deployment model.
+- **[CR#2.3] Password-protected shares:** Removed undesigned feature claim. 256-bit token provides sufficient access control; password protection deferred as named future feature.
+- **[CR#2.4] `album_photos` cross-tenant protection:** Added `user_id` column to `album_photos` with composite foreign keys referencing `albums(id, user_id)` and `photos(id, user_id)`; RLS policy now enforceable; corrected RLS documentation.
+- **[SA#12/CR#7] CSP `style-src 'unsafe-inline'`:** Documented as accepted trade-off required by Tailwind/shadcn dynamic class injection.
+- **[SA#14] Nginx path rewriting:** Documented `proxy_pass` trailing-slash path stripping behavior; added catch-all `/api/auth/` rate limit; documented Spring Boot controller path mappings use post-rewrite paths.
+- **[Cross-cutting] Worker payload validation:** Worker validates `photo_id` exists and `processing_status = 'pending'` in DB before processing any Redis Stream job.
+- **[CR#5] Email token expiry:** Verification tokens expire in 24 hours; password reset tokens expire in 1 hour; stored in `email_tokens` table; unverified accounts soft-gated (no uploads) with 7-day auto-purge.
+- **[CR#6] MinIO admin console:** Disabled in production via `MINIO_BROWSER=off`; all admin via `mc` CLI.
 
 ### v3.0 — 2026-02-24
 
@@ -154,7 +177,8 @@ All image processing runs in the `worker/` container. The `api/` container has n
 - Apache Tika validates content type before any file is passed to libraw, libvips, or ExifTool. Non-image files are rejected immediately.
 - libraw and libvips have significantly better security records than ImageMagick (no delegate-based RCE surface).
 - ExifTool is pinned to a specific version, run with `-fast2` to limit parsing depth, and confined to the worker container with no network access and no API credentials.
-- The worker container runs as a non-root unprivileged user with all Linux capabilities dropped.
+- **All CLI tools are invoked via `ProcessBuilder` with explicit argument arrays** — never shell string concatenation. Files are referenced by MinIO-generated UUID storage keys, never original user-supplied filenames. This eliminates command injection via crafted filenames.
+- The worker container runs as a non-root unprivileged user with all Linux capabilities dropped. The worker filesystem is `read_only: true` with a `tmpfs` mount for the working directory.
 
 ### Other Library Concerns
 
@@ -209,7 +233,10 @@ When adding worker replicas: (api_instances × 10) + (worker_instances × 5) < p
 Every table includes a `user_id` column. All queries are scoped to the authenticated user, enforced at the repository layer.
 
 ```sql
-users           (id, email, password_hash, oauth_provider, oauth_id, quota_bytes, used_bytes, created_at)
+users           (id, email, password_hash, oauth_provider, oauth_id, quota_bytes, used_bytes, created_at,
+                 failed_login_attempts INTEGER DEFAULT 0, locked_until TIMESTAMPTZ DEFAULT NULL)
+email_tokens    (id, user_id, token_hash, purpose VARCHAR(16), expires_at TIMESTAMPTZ NOT NULL, created_at)
+                -- purpose: 'verify' | 'reset'; token_hash = SHA-256(token); plaintext returned once via email
 photos          (id, user_id, filename, caption, title, description,
                  storage_key, size_bytes, content_hash, taken_at, uploaded_at,
                  processing_status VARCHAR(16) DEFAULT 'pending',
@@ -228,9 +255,14 @@ photo_metadata  (photo_id, exif_data jsonb, iptc_data jsonb, xmp_data jsonb)
 keywords        (id, user_id, name, parent_id)   -- hierarchical adjacency list, per-user
 photo_keywords  (photo_id, keyword_id)
 albums          (id, user_id, name, created_at)
-album_photos    (album_id, photo_id)
-shares          (id, user_id, resource_type, resource_id, token_hash, expires_at, permissions)
+album_photos    (album_id, photo_id, user_id,
+                 FOREIGN KEY (album_id, user_id) REFERENCES albums(id, user_id),
+                 FOREIGN KEY (photo_id, user_id) REFERENCES photos(id, user_id))
+                -- user_id denormalized for RLS enforcement + composite FK cross-tenant guard
+shares          (id, user_id, resource_type, resource_id, token_hash, expires_at, permissions,
+                 include_gps BOOLEAN DEFAULT FALSE)
                 -- token_hash = SHA-256(token); plaintext token returned once on creation, never stored
+                -- expires_at defaults to now() + 30 days; NULL = permanent (explicit opt-in)
 saved_searches  (id, user_id, name, query_json)
 ```
 
@@ -365,7 +397,7 @@ The `/settings` view displays current usage vs. quota.
 
 ### PostgreSQL Row Level Security (defense-in-depth)
 
-RLS is enabled on all tenant tables (`photos`, `photo_metadata`, `keywords`, `photo_keywords`, `albums`, `album_photos`, `shares`, `saved_searches`). Policy:
+RLS is enabled on all tenant tables (`photos`, `photo_metadata`, `keywords`, `photo_keywords`, `albums`, `album_photos`, `shares`, `saved_searches`). The `album_photos` table has a denormalized `user_id` column with composite foreign keys to enforce cross-tenant isolation at the database level (see schema above). Policy:
 
 ```sql
 CREATE POLICY tenant_isolation ON photos
@@ -415,21 +447,28 @@ Google/GitHub  → OAuth2 callback → user created/matched → JWT issued → s
 ```
 
 - JWT stored in **httpOnly cookie** (not localStorage) — prevents XSS token theft.
+- **JWT signing:** HS256 with a key of >= 256 bits of cryptographic randomness. Key generation: `openssl rand -base64 64`. **Key rotation procedure:** deploy new secret; keep old secret valid for 15 minutes to drain existing tokens; remove old secret after drain window.
 - **JWT expiry: 15 minutes.** Short-lived JWTs cannot be revoked server-side; 15 minutes is the accepted risk for this application class.
 - Refresh tokens stored in Redis with a configurable expiry (default: 30 days).
 - On password change: refresh token is revoked immediately in Redis. The short-lived JWT remains valid for up to 15 minutes (accepted risk — documented). The attacker loses the ability to obtain new JWTs within one expiry window.
 
+### Password Policy
+
+- **Minimum password length:** 12 characters.
+- **Hashing:** bcrypt with cost factor >= 12.
+- **Account lockout:** After 5 consecutive failed login attempts, the account is locked for 15 minutes (`users.locked_until`). The lockout counter (`users.failed_login_attempts`) resets on successful login. This complements IP-based Nginx rate limiting — lockout protects against distributed brute-force across multiple IPs.
+
 ### User Lifecycle
 
-- Email registration includes email verification (link sent via SMTP).
-- Password reset via email token.
+- Email registration includes email verification (link sent via SMTP). **Verification tokens expire in 24 hours.** Unverified accounts can log in but cannot upload photos (soft gate). Accounts unverified after 7 days are auto-purged.
+- Password reset via email token. **Reset tokens expire in 1 hour.** Both verification and reset tokens are stored in the `email_tokens` table as `SHA-256(token)` — plaintext returned once via email, never stored.
 - OAuth2 accounts are **never auto-merged by email**. If an OAuth login arrives for an email that already has a password account, the login is blocked and the user is shown: "An account with this email already exists. Log in with your password to link your Google account." Account linking is completed explicitly from the Settings page after the user authenticates with their existing credentials. Silent auto-merge is a known account pre-hijacking vector (OWASP).
 
 ### Authorization
 
 - Every API endpoint is secured by default.
 - Resource ownership checked at service layer: `photo.userId == currentUser.id` before any operation.
-- When adding a photo to an album, the service layer verifies `album.userId == photo.userId` before inserting into `album_photos` — cross-tenant junction records are prevented at the application layer.
+- When adding a photo to an album, cross-tenant isolation is enforced by composite foreign keys on `album_photos` (`(album_id, user_id)` → `albums`, `(photo_id, user_id)` → `photos`) and RLS policy. The service layer also verifies `album.userId == photo.userId` as a fast-fail check.
 - Share tokens validated separately — public share links bypass user auth but are scoped strictly to the shared resource.
 
 ### CSRF Protection
@@ -560,6 +599,8 @@ INSERT with processing_status = 'pending'
     → Worker fails:    UPDATE ... SET processing_status = 'failed'
 ```
 
+**Worker job validation:** Before processing any Redis Stream job, the worker validates that the referenced `photo_id` exists in the database and `processing_status = 'pending'`. Jobs referencing non-existent photos or photos in other states are `XACK`'d and discarded. This prevents processing of injected or stale job messages.
+
 **Worker startup recovery:** On startup, the worker re-enqueues all rows where `processing_status IN ('pending', 'processing') AND deleted_at IS NULL`. This is the authoritative recovery path for any Redis persistence gap — PostgreSQL is the source of truth for unprocessed jobs.
 
 **Consumer group configuration:**
@@ -581,7 +622,7 @@ A dedicated `ThreadPoolTaskExecutor` (configurable max workers, e.g. 4) bounds c
 
 - Libraries are private by default.
 - Users can generate share tokens for albums, collections, or individual photos.
-- Share links can be time-limited and optionally password-protected.
+- Share links default to 30-day expiry; users can explicitly create permanent links.
 - The `/share/:token` route is accessible without authentication, scoped strictly to the shared resource.
 
 ### Share Token Security
@@ -601,7 +642,15 @@ Only `SHA-256(token)` is stored in `shares.token_hash`. The plaintext token is r
 On `/share/:token`, hash the incoming token and query `WHERE token_hash = SHA-256(?)`.
 
 **Default expiry:**
-`expires_at = NULL` means the share never expires. A configurable default (e.g., `app.default-share-days = 0` for no expiry) can be set per deployment. Expired shares are checked at access time — no background cleanup required.
+`expires_at` defaults to `now() + interval '30 days'` (configurable via `app.default-share-days = 30`). Users can explicitly set `expires_at = NULL` when creating a share to make it permanent. Expired shares are checked at access time — no background cleanup required.
+
+**Manage Shares UI (Phase 5):**
+The `/settings` page includes a "Manage Shares" section listing all active share links with creation date, expiry, and resource. Users can revoke individual shares or bulk-revoke.
+
+**GPS metadata in shared photos:**
+GPS coordinates are **stripped** from EXIF data served via public share links by default. The share creator can opt-in to including location data per share link (`include_gps BOOLEAN DEFAULT FALSE` on `shares`). A user-level setting (`/settings`) controls whether GPS data is displayed in the owner's own metadata panel (stored but hidden by default for privacy-conscious users).
+
+> **Future consideration:** Password-protected share links are deferred. The 256-bit token provides sufficient access control. If needed, design will include: `password_hash` column on `shares`, bcrypt hashing, rate-limited password verification endpoint.
 
 **Share to deleted photo:**
 Share lookup joins `photos` and filters `deleted_at IS NULL`. Accessing a share whose photo is in Trash returns 404 with a user-facing message.
@@ -652,6 +701,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=512M    # Working directory for image processing
 
   postgres:
     image: postgres:16
@@ -665,7 +717,9 @@ services:
   minio:
     image: minio/minio
     volumes: [minio_data:/data]
-    command: server /data --console-address ":9001"
+    command: server /data
+    environment:
+      MINIO_BROWSER: "off"   # Disable admin console in production — all admin via mc CLI
     # No ports exposed externally — traffic routed via Nginx proxy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
@@ -680,7 +734,7 @@ services:
     # --appendfsync everysec: fsync every second (good balance of durability and performance)
     volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -693,24 +747,26 @@ services:
         mc alias set minio http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
         mc alias set b2 https://s3.us-west-004.backblazeb2.com $$B2_ACCESS_KEY $$B2_SECRET_KEY &&
         while true; do
-          mc mirror minio/jpt-photos b2/jpt-photos-backup --remove;
+          mc mirror minio/jpt-photos b2/jpt-photos-backup;
           sleep 3600;
         done"
     environment:
       MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-      B2_ACCESS_KEY, B2_SECRET_KEY
+      B2_BACKUP_ACCESS_KEY, B2_BACKUP_SECRET_KEY  # Write-only B2 credentials (no delete permission)
     depends_on:
       minio: { condition: service_healthy }
 
   pgbackup:
-    image: postgres:16   # same version as postgres service — includes pg_dump
+    build: ./pgbackup    # Custom image: FROM postgres:16 + RUN apt-get install -y restic=X.Y.Z
     restart: unless-stopped
+    user: "1000:1000"    # Non-root user
     entrypoint: >
       /bin/sh -c "
-        apt-get install -y restic 2>/dev/null;
         while true; do
           PGPASSWORD=$$DB_PASS pg_dump -h postgres -U $$DB_USER $$DB_NAME |
           restic backup --stdin --stdin-filename postgres.sql
+            -r b2:jpt-db-backup --password-file /run/secrets/restic_pass;
+          restic forget --prune --keep-daily 30 --keep-weekly 12
             -r b2:jpt-db-backup --password-file /run/secrets/restic_pass;
           sleep 86400;
         done"
@@ -720,6 +776,11 @@ services:
     secrets: [restic_pass]
     depends_on:
       postgres: { condition: service_healthy }
+
+secrets:
+  restic_pass:
+    file: ./secrets/restic_pass.txt   # Generated once: openssl rand -base64 32 > secrets/restic_pass.txt
+    # Provisioned on VPS before first docker compose up; not committed to git
 
   certbot:
     image: certbot/certbot
@@ -759,72 +820,88 @@ networks:
 ### Nginx Configuration
 
 ```nginx
-# HTTP → HTTPS redirect
-server {
-    listen 80;
-    server_name app.example.com;
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl;
-    server_name app.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/app.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options    "nosniff" always;
-    add_header X-Frame-Options           "DENY" always;
-    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy
-      "default-src 'self'; img-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline';"
-      always;
-
-    # Rate limiting zones (unauthenticated endpoints)
+http {
+    # Rate limiting zones — MUST be in http{} context, not server{} (nginx requirement)
     limit_req_zone $binary_remote_addr zone=login:10m    rate=10r/m;
     limit_req_zone $binary_remote_addr zone=register:10m rate=5r/m;
     limit_req_zone $binary_remote_addr zone=share:10m    rate=60r/m;
+    limit_req_zone $binary_remote_addr zone=auth:10m     rate=20r/m;   # catch-all for /api/auth/
 
-    # Static React app
-    location / {
-        root /usr/share/nginx/html;
-        try_files $uri /index.html;
+    # HTTP → HTTPS redirect
+    server {
+        listen 80;
+        server_name app.example.com;
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+        location / {
+            return 301 https://$host$request_uri;
+        }
     }
 
-    # Spring Boot API — large uploads allowed (RAW files up to ~100 MB)
-    location /api/ {
-        proxy_pass http://api:8080/;
-        client_max_body_size 250m;
-    }
+    server {
+        listen 443 ssl;
+        server_name app.example.com;
 
-    location /api/auth/login    { limit_req zone=login    burst=5 nodelay;
-                                   proxy_pass http://api:8080/auth/login; }
-    location /api/auth/register { limit_req zone=register burst=3 nodelay;
-                                   proxy_pass http://api:8080/auth/register; }
+        ssl_certificate     /etc/letsencrypt/live/app.example.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
 
-    # Public share links — rate limited to prevent token enumeration
-    location /share/ {
-        limit_req zone=share burst=10 nodelay;
-        root /usr/share/nginx/html;
-        try_files $uri /index.html;
-    }
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options    "nosniff" always;
+        add_header X-Frame-Options           "DENY" always;
+        add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy
+          "default-src 'self'; img-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline';"
+          always;
+        # Note: style-src 'unsafe-inline' is required for Tailwind/shadcn dynamic class injection.
+        # Review if CSP nonces become feasible in a future iteration.
 
-    # MinIO object storage — proxied, not exposed directly
-    location /photos/ {
-        proxy_pass http://minio:9000/jpt-photos/;
-        proxy_set_header Host $host;
-        # Pre-signed URL signatures remain valid because the public domain
-        # matches MINIO_SERVER_URL configured in the api/worker environment
+        # Static React app
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri /index.html;
+        }
+
+        # Spring Boot API — large uploads allowed (RAW files up to ~100 MB)
+        # Note: proxy_pass with trailing slash strips the /api/ prefix.
+        # Spring Boot controllers mount at post-rewrite paths (e.g., /auth/login, not /api/auth/login).
+        location /api/ {
+            proxy_pass http://api:8080/;
+            client_max_body_size 250m;
+        }
+
+        location /api/auth/login    { limit_req zone=login    burst=5 nodelay;
+                                       proxy_pass http://api:8080/auth/login; }
+        location /api/auth/register { limit_req zone=register burst=3 nodelay;
+                                       proxy_pass http://api:8080/auth/register; }
+
+        # Catch-all rate limit for /api/auth/ — protects future auth endpoints
+        location /api/auth/ { limit_req zone=auth burst=10 nodelay;
+                               proxy_pass http://api:8080/auth/; }
+
+        # Public share links — rate limited to prevent token enumeration
+        location /share/ {
+            limit_req zone=share burst=10 nodelay;
+            root /usr/share/nginx/html;
+            try_files $uri /index.html;
+        }
+
+        # MinIO object storage — proxied, not exposed directly
+        # HARD REQUIREMENT: MinIO bucket policy MUST be private (no anonymous access).
+        # Pre-signed URLs are the sole access path. Do not set public-read on jpt-photos bucket.
+        location ~ ^/photos/[a-f0-9-]+/(originals|thumbnails)/[a-f0-9-]+ {
+            proxy_pass http://minio:9000;
+            proxy_set_header Host $host;
+            proxy_set_header Authorization "";  # Strip ambient credentials at proxy layer
+        }
     }
 }
 ```
+
+**Nginx config validation:** `nginx -t` must be included in the CI pipeline to catch configuration errors before deployment.
+
+**Path rewriting note:** The trailing slash in `proxy_pass http://api:8080/` strips the `/api/` prefix. Spring Boot controllers mount at post-rewrite paths: `/auth/login`, `/auth/register`, `/photos/{id}`, etc. — not `/api/auth/login`. The catch-all `/api/auth/` location ensures all current and future auth endpoints are rate-limited.
 
 Pre-signed URLs are generated against the public domain (e.g. `https://app.example.com/photos/...`). `MINIO_SERVER_URL=https://app.example.com` must be set in the MinIO environment so generated URLs embed the correct public host.
 
@@ -834,19 +911,23 @@ Pre-signed URLs are generated against the public domain (e.g. `https://app.examp
 
 **PostgreSQL:** The `pgbackup` sidecar runs `pg_dump` piped to `restic` daily, stored in Backblaze B2 bucket `jpt-db-backup`. Restic provides deduplication, encryption, and retention management.
 
-**MinIO:** The `backup` sidecar container runs `mc mirror` hourly:
+**MinIO:** The `backup` sidecar container runs `mc mirror` hourly (without `--remove` — deletions are **not** propagated to backups):
 
 ```sh
 # Hourly incremental mirror via mc (runs in backup sidecar)
-mc mirror minio/jpt-photos b2/jpt-photos-backup --remove
+mc mirror minio/jpt-photos b2/jpt-photos-backup
 
 # DR fallback: filesystem snapshot (MinIO stopped — manual procedure)
 docker stop minio && restic backup /var/lib/docker/volumes/minio_data && docker start minio
 ```
 
 **B2 bucket versioning and retention:**
-- `jpt-photos-backup`: versioning enabled; **90-day lifecycle rule** configured — object versions older than 90 days are automatically expired. Configure via B2 lifecycle rules (B2 CLI: `b2 update-bucket --lifecycleRules ...`).
-- `jpt-db-backup`: managed by restic's `restic forget --keep-daily 30 --keep-weekly 12` policy.
+- `jpt-photos-backup`: versioning enabled; **B2 Object Lock** enabled (immutable retention) — prevents deletion even with valid credentials; **90-day lifecycle rule** configured — object versions older than 90 days are automatically expired. Configure via B2 lifecycle rules (B2 CLI: `b2 update-bucket --lifecycleRules ...`).
+- `jpt-db-backup`: managed by restic's `restic forget --prune --keep-daily 30 --keep-weekly 12` policy (runs after each daily backup in the pgbackup container loop).
+
+**Backup security:**
+- The backup sidecar uses **separate B2 credentials** (`B2_BACKUP_ACCESS_KEY` / `B2_BACKUP_SECRET_KEY`) with **write-only permissions** (no delete). Even if MinIO credentials are compromised and objects are deleted, the attacker cannot propagate deletions to B2.
+- **Monitoring:** Alert on bulk delete operations in MinIO audit logs (threshold: >100 deletes in 5 minutes).
 
 **Recovery from soft-delete accident:** MinIO object versions are retained for 90 days. Deleted objects restored from B2 versioning: `mc cp --version-id <id> b2/jpt-photos-backup/... minio/jpt-photos/...`.
 
@@ -927,11 +1008,19 @@ On every PR:
 
 On merge to master:
   5. npm run build (React production build)
-  6. rsync react-build/ to VPS:/srv/jpt/react-build/
-  7. docker compose exec nginx nginx -s reload
-  8. ./gradlew bootJar (api) → rsync JAR to VPS → docker compose restart api
-  9. ./gradlew workerJar (worker) → rsync JAR to VPS → docker compose restart worker
+  6. nginx -t (validate Nginx config)
+  7. Sign artifacts: generate SHA-256 checksums for JAR + React bundle; sign with CI signing key
+  8. rsync react-build/ + signed JARs to VPS via dedicated SSH deploy key (not a user key)
+  9. On VPS: verify artifact signatures before proceeding
+  10. docker compose build api worker (rebuild images with new JARs)
+  11. docker compose up -d --no-deps api worker
+  12. Post-deploy healthcheck: curl /actuator/health for 60s; on failure → rollback to previous image tag
+  13. docker compose exec nginx nginx -s reload
 ```
+
+**Deployment model:** CI builds JARs and React bundles locally, rsyncs them to the VPS. The VPS rebuilds Docker images (`docker compose build`) to bake the JARs into the images (not volume-mounted). This ensures images are self-contained and reproducible.
+
+**SSH deploy key:** A dedicated SSH key pair is generated for CI→VPS deployment. The private key is stored as a CI secret; the public key is added to the VPS deploy user's `authorized_keys` with `command=` restrictions limiting it to rsync and docker compose operations.
 
 CI via GitHub Actions or self-hosted Forgejo.
 
@@ -946,4 +1035,4 @@ CI via GitHub Actions or self-hosted Forgejo.
 | 2 | Backend API | Spring Security auth (JWT 15-min expiry, refresh tokens, OAuth2), rate limiting (Nginx + Bucket4j + `/share/` rate limit), core REST endpoints, Redis Streams consumer groups in worker, processing status polling endpoint (`GET /api/photos/{id}/status`) |
 | 3 | Storage & Media | MinIO integration, Nginx MinIO proxy, streaming upload, libraw + libvips thumbnail pipeline, metadata-extractor + ExifTool fallback, Apache Tika validation, `processing_status` state transitions in worker, worker startup re-enqueue recovery |
 | 4 | React Frontend | Auth flows, photo grid, single photo view, metadata panel (EXIF/IPTC/XMP), keyword tree, albums, Trash view, upload status polling UI |
-| 5 | Sharing & Polish | Share tokens (256-bit SecureRandom, SHA-256 storage), public share views, storage quotas (`SELECT FOR UPDATE`), photo deletion (soft delete, restore, permanent purge, async MinIO cleanup), orphan reconciliation sweep, B2 lifecycle rules, monitoring dashboards and alerts |
+| 5 | Sharing & Polish | Share tokens (256-bit SecureRandom, SHA-256 storage, 30-day default expiry), public share views (GPS stripped by default), Manage Shares UI, storage quotas (`SELECT FOR UPDATE`), photo deletion (soft delete, restore, permanent purge, async MinIO cleanup), orphan reconciliation sweep, B2 lifecycle rules + Object Lock, monitoring dashboards and alerts |
