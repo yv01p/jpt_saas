@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 0: Java Upgrade & Gradle Migration
 
-> **Version:** 1.1
+> **Version:** 1.3
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate existing JPhotoTagger modules to a Gradle 8 multi-module build and compile/test on Java 21. This phase covers the core modules needed for compilation; desktop-only modules are deferred.
@@ -52,6 +52,7 @@ These will be addressed if/when SaaS phases require their functionality.
 - Create: `repositories/build.gradle.kts`
 - Create: `image/build.gradle.kts`
 - Create: `shared/build.gradle.kts`
+- Create: `shared/src/main/java/org/jphototagger/shared/package-info.java`
 - Create: `server/build.gradle.kts`
 - Create: `worker/build.gradle.kts`
 - Update: `.gitignore`
@@ -78,6 +79,9 @@ tika = "2.9.2"
 jjwt = "0.12.5"
 bucket4j = "8.10.1"
 netbeans-lookup = "RELEASE220"
+jakarta-xml-bind = "4.0.2"
+jaxb-runtime = "4.0.5"
+junit-jupiter = "5.10.2"
 
 [libraries]
 metadata-extractor = { module = "com.drewnoakes:metadata-extractor", version.ref = "metadata-extractor" }
@@ -90,6 +94,9 @@ jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
 jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
 bucket4j-redis = { module = "com.bucket4j:bucket4j-redis", version.ref = "bucket4j" }
 netbeans-lookup = { module = "org.netbeans.api:org-openide-util-lookup", version.ref = "netbeans-lookup" }
+jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", version.ref = "jakarta-xml-bind" }
+jaxb-runtime = { module = "org.glassfish.jaxb:jaxb-runtime", version.ref = "jaxb-runtime" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
@@ -115,12 +122,23 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
+sourceSets {
+    main {
+        resources.srcDirs("src/main/java")
+        resources.include("**/*.properties", "**/*.xml")
+    }
+}
+
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
 }
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+dependencies {
+    "testImplementation"("org.junit.jupiter:junit-jupiter:5.10.2")
 }
 ```
 
@@ -159,6 +177,8 @@ plugins {
 
 dependencies {
     // Lib has mostly JDK-only deps (Swing utilities, IO, etc.)
+    implementation(libs.jakarta.xml.bind.api)
+    runtimeOnly(libs.jaxb.runtime)
 }
 ```
 
@@ -185,6 +205,8 @@ dependencies {
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
     implementation(libs.netbeans.lookup)
+    implementation(libs.jakarta.xml.bind.api)
+    runtimeOnly(libs.jaxb.runtime)
 }
 ```
 
@@ -217,6 +239,7 @@ dependencies {
     implementation(project(":domain"))
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
+    implementation(libs.metadata.extractor)
 }
 ```
 
@@ -231,6 +254,8 @@ dependencies {
     implementation(project(":domain"))
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
+    implementation(project(":metadata"))
+    implementation(project(":image"))
     runtimeOnly(libs.hsqldb)
 }
 ```
@@ -245,6 +270,15 @@ plugins {
 dependencies {
     // Shared DTOs — no heavy deps
 }
+```
+
+**Step 13a: Create `shared/src/main/java/org/jphototagger/shared/package-info.java`**
+
+```java
+/**
+ * Shared DTOs for server and worker modules.
+ */
+package org.jphototagger.shared;
 ```
 
 **Step 14: Create `server/build.gradle.kts` (Spring Boot stub)**
@@ -283,9 +317,7 @@ dependencies {
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
-    testImplementation("org.testcontainers:minio")
+    // Testcontainers deferred to Phase 1a when server tests are written
 }
 ```
 
@@ -337,7 +369,7 @@ Expected: BUILD SUCCESSFUL (task graph resolves)
 **Step 18: Commit**
 
 ```bash
-git add settings.gradle.kts build.gradle.kts buildSrc/ gradle/ */build.gradle.kts gradlew gradlew.bat .gitignore
+git add settings.gradle.kts build.gradle.kts buildSrc/ gradle/ */build.gradle.kts gradlew gradlew.bat .gitignore shared/
 git commit -m "build: migrate from Ant to Gradle 8 multi-module project with convention plugins"
 ```
 
@@ -355,21 +387,28 @@ cp -r Lib/src/org lib/src/main/java/
 [ -d Lib/test ] && cp -r Lib/test/org lib/src/test/java/
 ```
 
-**Step 2: Verify lib module compiles**
+**Step 2: Migrate JAXB imports from `javax.xml.bind` to `jakarta.xml.bind`**
+
+Find and replace all `javax.xml.bind` imports in `lib/src/`:
+```bash
+find lib/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+**Step 3: Verify lib module compiles**
 
 Run: `./gradlew :lib:compileJava`
 Expected: BUILD SUCCESSFUL
 
-**Step 3: Fix any Java 21 compilation errors in lib**
+**Step 4: Fix any Java 21 compilation errors in lib**
 
 Common issues: `sun.*` imports, removed APIs, deprecated methods. Fix each error one at a time.
 
-**Step 4: Run lib tests**
+**Step 5: Run lib tests**
 
 Run: `./gradlew :lib:test`
 Expected: All tests pass
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git add lib/
@@ -423,21 +462,27 @@ cp -r Domain/src/org domain/src/main/java/
 [ -d Domain/test ] && cp -r Domain/test/org domain/src/test/java/
 ```
 
-**Step 2: Verify domain module compiles**
+**Step 2: Migrate JAXB imports from `javax.xml.bind` to `jakarta.xml.bind`**
+
+```bash
+find domain/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+**Step 3: Verify domain module compiles**
 
 Run: `./gradlew :domain:compileJava`
 Expected: BUILD SUCCESSFUL
 
-**Step 3: Fix any Java 21 compilation errors in domain**
+**Step 4: Fix any Java 21 compilation errors in domain**
 
 Common issues: `sun.*` imports, removed APIs, deprecated methods. Fix each error one at a time.
 
-**Step 4: Run domain tests**
+**Step 5: Run domain tests**
 
 Run: `./gradlew :domain:test`
 Expected: All tests pass
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git add domain/
@@ -458,24 +503,34 @@ mkdir -p metadata/src/main/java metadata/src/test/java
 rsync -a Exif/src/org/ metadata/src/main/java/org/
 rsync -a Iptc/src/org/ metadata/src/main/java/org/
 rsync -a XMP/src/org/ metadata/src/main/java/org/
+# Also copy test sources
+[ -d Exif/test ] && rsync -a Exif/test/org/ metadata/src/test/java/org/
+[ -d Iptc/test ] && rsync -a Iptc/test/org/ metadata/src/test/java/org/
+[ -d XMP/test ] && rsync -a XMP/test/org/ metadata/src/test/java/org/
 # Verify: total files in sources == total files in target
 ```
 
-**Step 2: Verify metadata module compiles**
+**Step 2: Migrate JAXB imports from `javax.xml.bind` to `jakarta.xml.bind`**
+
+```bash
+find metadata/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+**Step 3: Verify metadata module compiles**
 
 Run: `./gradlew :metadata:compileJava`
 Expected: BUILD SUCCESSFUL (may need dependency fixes)
 
-**Step 3: Fix Java 21 compilation errors and update library versions**
+**Step 4: Fix Java 21 compilation errors and update library versions**
 
 Update metadata-extractor and xmpcore to current versions. Fix any deprecation or API changes.
 
-**Step 4: Run metadata tests**
+**Step 5: Run metadata tests**
 
 Run: `./gradlew :metadata:test`
 Expected: All tests pass
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git add metadata/
@@ -540,22 +595,43 @@ git add repositories/
 git commit -m "build: migrate Repositories module to Gradle layout, Java 21"
 ```
 
-### Task 0.8: Audit ImgRdr Library
+### Task 0.8: Replace Imagero (ImgrRdr.jar) with metadata-extractor
 
-**Step 1: Check if ImgRdr is used reflectively or via ImageIO SPI**
+18 files across domain, metadata, and image modules import `com.imagero.reader.*`. Imagero is a commercial library with unknown SaaS licensing. metadata-extractor (Apache 2.0) is already a dependency and can replace all Imagero functionality.
 
-`Libraries/ImgrRdr.jar` exists on the classpath (via NetBeans project files for Domain, Program, Iptc) but has zero Java source imports. Check for reflective usage or SPI registration.
+**Sub-task 0.8.1: Create `IptcField` enum in domain module**
+
+Create `domain/src/main/java/org/jphototagger/domain/metadata/iptc/IptcField.java` — an enum with 21 constants mapping to IPTC dataset numbers (e.g., `OBJECT_NAME(5)`, `BYLINE(80)`, `CAPTION_ABSTRACT(120)`). This replaces the Imagero `IPTCEntryMeta` enum that domain files currently reference. The enum is self-contained with no external dependencies.
+
+**Sub-task 0.8.2: Migrate domain files from `IPTCEntryMeta` → `IptcField`**
+
+Mechanical find-replace across 7 domain files: change `import com.imagero.reader.iptc.IPTCEntryMeta` → `import org.jphototagger.domain.metadata.iptc.IptcField` and update all type references from `IPTCEntryMeta` to `IptcField`. Verify: `./gradlew :domain:compileJava`
+
+**Sub-task 0.8.3: Rewrite IPTC metadata readers to use metadata-extractor**
+
+Rewrite `IptcMetadata.java` and `IptcEntry.java` in the metadata module to use metadata-extractor's `IptcDirectory` instead of Imagero's `MetadataUtils.getIPTC()`. Update `XmpMetadata.java` to remove Imagero import. Verify: `./gradlew :metadata:compileJava`
+
+**Sub-task 0.8.4: Consolidate EXIF readers onto metadata-extractor**
+
+Expand the existing `MetaDataExtractorExifMetadataReader` to handle all image formats. Delete `ImageroExifMetadataReader`. Remove the `IFDEntry` constructor from `ExifTag` (only needed for Imagero integration). Verify: `./gradlew :metadata:compileJava`
+
+**Sub-task 0.8.5: Rewrite `NikonMakerNotes` to use metadata-extractor**
+
+Replace Imagero's Nikon maker note parsing with metadata-extractor's native `NikonType2MakernoteDirectory` support. Verify: `./gradlew :metadata:compileJava`
+
+**Sub-task 0.8.6: Replace Imagero thumbnail APIs**
+
+Rewrite `ThumbnailUtil` and `DcrawThumbnailCreator` in the image module to use metadata-extractor's `ExifThumbnailDirectory` + `javax.imageio.ImageIO` instead of Imagero's thumbnail extraction. Verify: `./gradlew :image:compileJava`
+
+**Sub-task 0.8.7: Remove ImgrRdr.jar and verify clean build**
+
+Delete `Libraries/ImgrRdr.jar`. Verify no remaining references: `grep -r "ImgrRdr\|imagero" --include="*.kts" --include="*.gradle" --include="*.java"`. Run: `./gradlew compileJava`. Expected: BUILD SUCCESSFUL with zero Imagero references.
+
+**Commit:**
 
 ```bash
-grep -r "ImgRdr\|imgrdr\|imagero" --include="*.java" --include="*.xml" --include="*.properties" .
-```
-
-**Step 2: If unused, remove from the build. If used, add as a file dependency.**
-
-**Step 3: Commit**
-
-```bash
-git commit -m "build: resolve ImgRdr library dependency"
+git add -A
+git commit -m "refactor: replace Imagero (ImgrRdr.jar) with metadata-extractor (Apache 2.0)"
 ```
 
 ### Task 0.9: Migrated Module Test Suite Validation on Java 21
@@ -578,6 +654,14 @@ git tag v2.0.0-java21
 
 **Next Phase:** [Phase 1a: Spring Boot Scaffold & Database](2026-02-25-saas-conversion-phase-1a.md)
 
+> **Phase 1a reminder:** Add Testcontainers dependencies to `server/build.gradle.kts` when the first server test is written:
+> ```kotlin
+> testImplementation("org.testcontainers:junit-jupiter")
+> testImplementation("org.testcontainers:postgresql")
+> testImplementation("org.testcontainers:minio")
+> ```
+> Also: Phase 1a currently references `api/` — rename to `server/` to match Phase 0 naming.
+
 ---
 
 ## Change Log
@@ -586,3 +670,5 @@ git tag v2.0.0-java21
 |---------|------|---------|
 | 1.0 | 2026-02-25 | Initial plan |
 | 1.1 | 2026-02-25 | Applied Critical Implementation Review v1. Key changes: (1) Added `lib` and `jpt-api` module migration tasks — Domain and Repositories depend on them. (2) Fixed Domain deps: requires `:lib`, `:jpt-api`, NetBeans Lookup (kept for Phase 0 compat, replaced by Spring DI in Phase 1). (3) Fixed Repositories deps: requires `:domain`, `:lib`, `:jpt-api`, HSQLDB as runtimeOnly. (4) Added `image` module migration task. (5) Renamed Spring Boot API module from `api/` to `server/` to avoid collision with existing `API/` directory. Renamed existing API interfaces module to `jpt-api/`. (6) Added Gradle wrapper bootstrap step. (7) Replaced `subprojects {}` block with convention plugin (`buildSrc/jpt.java-conventions.gradle.kts`). (8) Added `gradle/libs.versions.toml` version catalog; updated Spring Boot from 3.3.0 to 3.4.2. (9) Switched metadata merge from `cp -r` to `rsync -a` for safety. (10) Simplified ImgRdr audit task. (11) Added `.gitignore` entries for `.gradle/` and `build/`. (12) Narrowed scope: explicitly listed in-scope vs out-of-scope modules; changed goal from "full existing test suite" to "all migrated modules compile and pass their own tests." |
+| 1.3 | 2026-02-25 | Added Task 0.8: Replace Imagero (ImgrRdr.jar) with metadata-extractor (Apache 2.0). Removed ImgrRdr.jar file dependency from domain, metadata, and image build.gradle.kts definitions — Imagero is now fully replaced in Phase 0 rather than carried as tech debt. Added `implementation(libs.metadata.extractor)` to image module for thumbnail extraction. Removed ImgRdr licensing tech debt note. Renumbered old Task 0.8 (Validation) → Task 0.9. |
+| 1.2 | 2026-02-25 | Applied Critical Implementation Review v2. Key changes: (1) Added Jakarta JAXB dependencies (`jakarta.xml.bind-api` 4.0.2, `jaxb-runtime` 4.0.5) to version catalog; added JAXB migration steps (`javax.xml.bind` → `jakarta.xml.bind`) to Tasks 0.2, 0.4, 0.5 — 104 usages across 31 files would fail on Java 21 without this. (2) Added `ImgrRdr.jar` as file dependency to domain, metadata, and image `build.gradle.kts` — 18 files across these modules directly import `com.imagero.reader.*`; documented as tech debt with licensing concern for SaaS use. Removed standalone Task 0.8 (ImgRdr audit) since dependency is now declared upfront. (3) Added `:metadata` and `:image` to `repositories/build.gradle.kts` — 18 repository files import from exif/iptc/xmp/image packages. (4) Added `sourceSets.main.resources.srcDirs("src/main/java")` to convention plugin to pick up 80+ `.properties` files co-located with Java sources. (5) Added JUnit 5 (`junit-jupiter` 5.10.2) to version catalog and convention plugin — `useJUnitPlatform()` was set but no test dependency was declared. (6) Added `package-info.java` placeholder to `shared` module. (7) Removed Testcontainers from `server/build.gradle.kts` (no tests in Phase 0); added reminder note for Phase 1a. (8) Renumbered Task 0.9 → 0.8 after removing ImgRdr audit task. (9) Added Phase 1a reminders: re-add Testcontainers deps, rename `api/` → `server/`. |
