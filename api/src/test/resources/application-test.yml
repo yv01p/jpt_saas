@@ -1,11 +1,11 @@
 spring:
   datasource:
-    url: jdbc:tc:postgresql:16:///jpt
+    url: jdbc:tc:postgresql:16:///jpt?TC_DAEMON=true
     username: test
     password: test
   flyway:
     enabled: true
-    url: jdbc:tc:postgresql:16:///jpt
+    url: jdbc:tc:postgresql:16:///jpt?TC_DAEMON=true
     user: test
     password: test
     placeholders:
