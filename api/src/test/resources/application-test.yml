@@ -1,9 +1,16 @@
 spring:
   datasource:
     url: jdbc:tc:postgresql:16:///jpt
+    username: test
+    password: test
   flyway:
     enabled: true
     url: jdbc:tc:postgresql:16:///jpt
+    user: test
+    password: test
+    placeholders:
+      jpt_app_password: unused
+      worker_db_user_password: unused
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
 

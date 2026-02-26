@@ -4,6 +4,16 @@ plugins {
     alias(libs.plugins.spring.dependency.management)
 }
 
+sourceSets {
+    main {
+        resources {
+            // Override convention plugin's restrictive include filter
+            // to allow .yml and .sql files from src/main/resources
+            include("**/*")
+        }
+    }
+}
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
