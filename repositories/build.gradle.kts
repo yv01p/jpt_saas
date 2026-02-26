@@ -10,5 +10,6 @@ dependencies {
     implementation(project(":image"))
     implementation(libs.netbeans.lookup)
     annotationProcessor(libs.netbeans.lookup)
-    runtimeOnly(libs.hsqldb)
+    implementation(files("../Libraries/eventbus.jar"))
+    implementation(libs.hsqldb)
 }
