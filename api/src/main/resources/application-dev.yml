@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    password: ${DB_PASS:jpt}
+  flyway:
+    password: ${FLYWAY_DB_PASS:jpt}
+    placeholders:
+      jpt_app_password: ${DB_PASS:jpt}
+      worker_db_user_password: ${WORKER_DB_PASS:worker}
+
+app:
+  jwt-secret: ${JWT_SECRET:dev-secret-change-me-in-prod-must-be-at-least-256-bits-long-ok}
+
+minio:
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}

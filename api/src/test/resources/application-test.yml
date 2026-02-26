@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16:///jpt
+  flyway:
+    enabled: true
+    url: jdbc:tc:postgresql:16:///jpt
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+
+app:
+  jwt-secret: test-secret-not-for-production-must-be-at-least-256-bits-long-ok
