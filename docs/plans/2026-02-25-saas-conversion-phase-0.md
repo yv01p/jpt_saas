@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 0: Java Upgrade & Gradle Migration
 
-> **Version:** 1.5
+> **Version:** 1.6
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate existing JPhotoTagger modules to a Gradle 8 multi-module build and compile/test on Java 21. This phase covers the core modules needed for compilation; desktop-only modules are deferred.
@@ -76,6 +76,7 @@ Requires Gradle installed on the system.
 
 ```bash
 gradle wrapper --gradle-version 8.8
+./gradlew wrapper --gradle-version 8.8 --validate-checksums
 ```
 
 **Step 2: Create `gradle/libs.versions.toml` (version catalog)**
@@ -94,7 +95,7 @@ bucket4j = "8.10.1"
 netbeans-lookup = "RELEASE220"
 jakarta-xml-bind = "4.0.2"
 jaxb-runtime = "4.0.5"
-testcontainers = "1.19.7"
+testcontainers = "1.20.4"
 junit-jupiter = "5.10.2"
 
 [libraries]
@@ -402,10 +403,18 @@ build/
 Run: `./gradlew build --dry-run`
 Expected: BUILD SUCCESSFUL (task graph resolves)
 
+**Step 17a: Generate Gradle dependency verification metadata**
+
+Pin SHA-256/SHA-512 checksums for all downloaded artifacts to prevent supply chain attacks:
+```bash
+./gradlew --write-verification-metadata sha256,sha512 build --dry-run
+```
+This creates `gradle/verification-metadata.xml`. Commit it alongside the build files. When dependencies change in future tasks, re-run this command to update the file.
+
 **Step 18: Commit**
 
 ```bash
-git add settings.gradle.kts build.gradle.kts buildSrc/ gradle/ */build.gradle.kts gradlew gradlew.bat .gitignore shared/
+git add settings.gradle.kts build.gradle.kts buildSrc/ gradle/ */build.gradle.kts gradlew gradlew.bat .gitignore shared/ gradle/verification-metadata.xml
 git commit -m "build: migrate from Ant to Gradle 8 multi-module project with convention plugins"
 ```
 
@@ -430,6 +439,11 @@ cp -r Lib/src/org lib/src/main/java/
 Find and replace all `javax.xml.bind` imports in `lib/src/`:
 ```bash
 find lib/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+Review the diff to verify only import statements were changed (not string literals, comments, or XML namespace URIs):
+```bash
+git diff -- lib/src/
 ```
 
 **Step 3: Verify lib module compiles**
@@ -506,6 +520,11 @@ cp -r Domain/src/org domain/src/main/java/
 find domain/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
 ```
 
+Review the diff to verify only import statements were changed:
+```bash
+git diff -- domain/src/
+```
+
 **Step 3: Verify domain module compiles and `@ServiceProvider` annotation processing works**
 
 Run: `./gradlew :domain:compileJava`
@@ -554,6 +573,11 @@ rsync -a XMP/src/org/ metadata/src/main/java/org/
 
 ```bash
 find metadata/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+Review the diff to verify only import statements were changed:
+```bash
+git diff -- metadata/src/
 ```
 
 **Step 3: Verify metadata module compiles**
@@ -647,7 +671,7 @@ git commit -m "build: migrate Repositories module to Gradle layout, Java 21"
 
 18 files across domain, metadata, and image modules import `com.imagero.reader.*`. Imagero is a commercial library with unknown SaaS licensing. metadata-extractor (Apache 2.0) is already a dependency and can replace all Imagero functionality.
 
-> **Note:** Compilation gates in each sub-task verify API compatibility only. Behavioral parity (correct metadata values extracted from real images) will be validated in Phase 1 with integration tests against sample images.
+> **Note:** Compilation gates in each sub-task verify API compatibility only. Behavioral parity is verified in sub-task 0.8.8 with sample-image JUnit tests before Phase 0 completion.
 
 **Key API mappings (Imagero → metadata-extractor):**
 
@@ -703,6 +727,19 @@ Delete `Libraries/ImgrRdr.jar`. Verify no remaining references: `grep -r "ImgrRd
 
 > **Note:** `Program/` sources still reference Imagero and will not compile after this deletion. This is expected — `Program/` is out of Phase 0 scope and will be migrated if/when needed.
 
+**Sub-task 0.8.8: Behavioral parity verification with sample images**
+
+*Depends on: 0.8.7*
+
+Add 5-10 sample images from common camera models (JPEG with EXIF, IPTC, and XMP metadata) to `metadata/src/test/resources/samples/`. Write a JUnit test `MetadataExtractionParityTest` that verifies metadata-extractor returns expected values for:
+- EXIF: GPS coordinates, camera model, date/time, orientation
+- IPTC: object name, byline, caption/abstract, keywords
+- XMP: basic Dublin Core fields (title, description, creator)
+
+For each sample image, document the expected metadata values as test constants. This catches regressions from the Imagero replacement — wrong GPS direction, missing IPTC fields, thumbnail extraction failures — before Phase 1 begins.
+
+Verify: `./gradlew :metadata:test`
+
 **Commit:**
 
 ```bash
@@ -737,7 +774,8 @@ git tag v2.0.0-java21
 > testImplementation("org.testcontainers:minio")
 > ```
 > Also: Phase 1a currently references `api/` — rename to `server/` to match Phase 0 naming.
-> Also: Add Testcontainers BOM to `worker/build.gradle.kts`: `testImplementation(platform("org.testcontainers:testcontainers-bom:1.19.7"))` — currently missing, risking version conflicts.
+> Also: Add Testcontainers BOM to `worker/build.gradle.kts`: `testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))` — currently missing, risking version conflicts.
+> Also: Remove HSQLDB dependency from `repositories/build.gradle.kts` once PostgreSQL migration is complete — HSQLDB has historical RCE vulnerabilities (CVE-2022-41853, patched in 2.7.1) and should not remain on the classpath after the migration.
 
 ---
 
@@ -745,6 +783,7 @@ git tag v2.0.0-java21
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-02-25 | Applied Security Audit v1 findings. Key changes: (1) Updated Testcontainers from 1.19.7 to 1.20.4. (2) Added `gradle/verification-metadata.xml` generation step (Step 17a) to Task 0.1 for supply chain integrity. (3) Added `--validate-checksums` to Gradle wrapper bootstrap in Step 1. (4) Added `git diff` review notes after each `sed` JAXB migration command in Tasks 0.2, 0.4, 0.5. (5) Added sub-task 0.8.8: behavioral parity verification with sample-image JUnit tests for metadata-extractor replacement. (6) Added HSQLDB removal reminder to Phase 1a notes. |
 | 1.5 | 2026-02-25 | Applied Critical Implementation Review v4. Key changes: (1) Added `annotationProcessor(libs.netbeans.lookup)` to domain, metadata, image, and repositories modules — without this, `@ServiceProvider` annotations silently fail to generate `META-INF/services` files. (2) Added test directory layout verification note to Task 0.2 (applies to 0.2–0.7). (3) Added `ExifTag` `IFDEntry` constructor caller verification to sub-task 0.8.4. (4) Added `DcrawThumbnailCreator` Imagero vs. dcraw code path analysis note to sub-task 0.8.6. (5) Added co-located resource type verification comment to convention plugin. (6) Added Testcontainers version and BOM to version catalog for Phase 1a consistency. (7) Added `META-INF/services` generation verification step to Task 0.4 domain compilation. (8) Added `XmpMetadata.java` functional dependency check to sub-task 0.8.3. |
 | 1.4 | 2026-02-25 | Applied Critical Implementation Review v3. Key changes: (1) Added Prerequisites section (Java 21 JDK, Gradle 8.8+). (2) Added `libs` version catalog comment in convention plugin — accessor not available in buildSrc. (3) Disabled `bootJar` in server and worker modules — no main classes in Phase 0. (4) Added API mapping table and behavioral parity note to Task 0.8. (5) Added `getDatasetNumber()` and `fromDatasetNumber(int)` to IptcField enum spec. (6) Added dependency annotations to sub-tasks 0.8.2 and 0.8.3. (7) Added META-INF/services check to sub-task 0.8.4. (8) Added metadata-extractor version verification step to Task 0.5. (9) Added HSQLDB import verification step to Task 0.7. (10) Replaced `git add -A` with targeted staging in Task 0.8. (11) Added Program/ breakage note to sub-task 0.8.7. (12) Added Testcontainers BOM reminder for Phase 1a. |
 | 1.0 | 2026-02-25 | Initial plan |
