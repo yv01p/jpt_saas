@@ -3,10 +3,10 @@ package org.jphototagger.lib.util;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import org.junit.AfterClass;
-import static org.junit.Assert.assertEquals;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * @author Elmar Baumann
@@ -16,11 +16,11 @@ public class StringUtilTest {
     public StringUtilTest() {
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setUpClass() throws Exception {
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDownClass() throws Exception {
     }
 

@@ -1,11 +1,11 @@
 package org.jphototagger.lib.net;
 
 import org.jphototagger.lib.util.Version;
-import org.junit.AfterClass;
-import static org.junit.Assert.assertEquals;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 /**
  * @author Elmar Baumann
@@ -15,11 +15,11 @@ public class VersionCheckTest {
     public VersionCheckTest() {
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setUpClass() throws Exception {
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDownClass() throws Exception {
     }
 
@@ -28,7 +28,7 @@ public class VersionCheckTest {
      * @throws Exception
      */
     @Test
-    @Ignore("Requires local HTTP server")
+    @Disabled("Requires local HTTP server")
     public void testExistsNewer() throws Exception {
         final String urlHtml = "http://localhost/fotografie/tipps/computer/lightroom/imagemetadataviewer.html";
         final String versionDelimiter = ".";

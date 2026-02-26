@@ -2,8 +2,8 @@ package org.jphototagger.lib.io;
 
 import java.io.File;
 import javax.swing.tree.DefaultMutableTreeNode;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 /**
  * @author Elmar Baumann
@@ -33,8 +33,8 @@ public class TreeFileSystemDirectoriesTest {
 
         TreeFileSystemDirectories.updateFilesAfterRenamingInTreeModel(ancestor, "/1");
 
-        Assert.assertEquals("/2/2", ((File) firstChild.getUserObject()).getAbsolutePath());
-        Assert.assertEquals("/2/2/3", ((File) firstChildsFirstChild.getUserObject()).getAbsolutePath());
-        Assert.assertEquals("/2/3", ((File) secondChild.getUserObject()).getAbsolutePath());
+        Assertions.assertEquals("/2/2", ((File) firstChild.getUserObject()).getAbsolutePath());
+        Assertions.assertEquals("/2/2/3", ((File) firstChildsFirstChild.getUserObject()).getAbsolutePath());
+        Assertions.assertEquals("/2/3", ((File) secondChild.getUserObject()).getAbsolutePath());
     }
 }

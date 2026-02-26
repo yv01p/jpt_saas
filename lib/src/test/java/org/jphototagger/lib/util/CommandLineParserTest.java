@@ -1,10 +1,10 @@
 package org.jphototagger.lib.util;
 
 import org.jphototagger.lib.util.CommandLineParser.Option;
-import org.junit.AfterClass;
-import static org.junit.Assert.assertEquals;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * @author Elmar Baumann
@@ -14,11 +14,11 @@ public class CommandLineParserTest {
     public CommandLineParserTest() {
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setUpClass() throws Exception {
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDownClass() throws Exception {
     }
 

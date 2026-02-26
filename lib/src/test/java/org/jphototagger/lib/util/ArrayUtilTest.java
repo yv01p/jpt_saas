@@ -4,13 +4,13 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.junit.After;
-import org.junit.AfterClass;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.fail;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.fail;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests the Class {@code org.jphototagger.lib.util.ArrayUtil}.
@@ -22,19 +22,19 @@ public class ArrayUtilTest {
     public ArrayUtilTest() {
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setUpClass() throws Exception {
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDownClass() throws Exception {
     }
 
-    @Before
+    @BeforeEach
     public void setUp() {
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
     }
 

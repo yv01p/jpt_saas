@@ -22,7 +22,6 @@ dependencies {
     // Resources module
     implementation(project(":resources"))
 
-    // JUnit 4 tests via vintage engine
-    testImplementation("junit:junit:4.13.2")
-    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
+    // JUnit 5 (Jupiter)
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
 }
