@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 1a: Spring Boot Scaffold & Database
 
-> **Version:** 4.0
+> **Version:** 5.0
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Convert JPhotoTagger from a single-user Java Swing desktop app into a multi-user web SaaS application per the approved design (docs/plans/2026-02-24-saas-conversion-design.md).
@@ -190,6 +190,9 @@ spring:
     url: ${FLYWAY_DB_URL:${DB_URL:jdbc:postgresql://localhost:5432/jpt}}
     user: ${FLYWAY_DB_USER:jpt}
     password: ${FLYWAY_DB_PASS}
+    placeholders:
+      jpt_app_password: ${DB_PASS}
+      worker_db_user_password: ${WORKER_DB_PASS}
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
@@ -204,8 +207,8 @@ app:
 
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
-  access-key: ${MINIO_ACCESS_KEY:minioadmin}
-  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
   bucket: jpt-photos
 ```
 
@@ -220,9 +223,16 @@ spring:
     password: ${DB_PASS:jpt}
   flyway:
     password: ${FLYWAY_DB_PASS:jpt}
+    placeholders:
+      jpt_app_password: ${DB_PASS:jpt}
+      worker_db_user_password: ${WORKER_DB_PASS:worker}
 
 app:
   jwt-secret: ${JWT_SECRET:dev-secret-change-me-in-prod-must-be-at-least-256-bits-long-ok}
+
+minio:
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
 ```
 
 **Step 6: Write test `application-test.yml`**
@@ -559,6 +569,8 @@ class RlsTest {
             String.class);
 
         assertThat(policyNames).containsExactlyInAnyOrder(
+            "tenant_users",
+            "tenant_email_tokens",
             "tenant_photos",
             "tenant_photo_metadata",
             "tenant_keywords",
@@ -587,7 +599,7 @@ Expected: FAIL — no RLS policies
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jpt_app') THEN
-        CREATE ROLE jpt_app WITH LOGIN PASSWORD 'changeme';
+        CREATE ROLE jpt_app WITH LOGIN PASSWORD '${jpt_app_password}';
     END IF;
 END
 $$;
@@ -600,7 +612,22 @@ GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO jpt_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jpt_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO jpt_app;
 
--- Enable RLS on all tenant tables
+-- Fail-fast assertion: raises exception if app.current_user_id is nil UUID.
+-- Phase 2 interceptor should call SELECT assert_user_context() after SET LOCAL.
+CREATE FUNCTION assert_user_context() RETURNS void AS $$
+BEGIN
+    IF current_setting('app.current_user_id', true) IS NULL
+       OR current_setting('app.current_user_id', true) = '00000000-0000-0000-0000-000000000000' THEN
+        RAISE EXCEPTION 'app.current_user_id is not set (nil UUID or missing)';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Enable RLS on all tenant tables (including users and email_tokens)
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+ALTER TABLE email_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_tokens FORCE ROW LEVEL SECURITY;
 ALTER TABLE photos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE photo_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE keywords ENABLE ROW LEVEL SECURITY;
@@ -611,6 +638,14 @@ ALTER TABLE shares ENABLE ROW LEVEL SECURITY;
 ALTER TABLE saved_searches ENABLE ROW LEVEL SECURITY;
 
 -- RLS policies — direct user_id equality (no correlated subqueries)
+-- NOTE: users and email_tokens RLS means login, registration, and email
+-- verification flows (Phase 2) must use a privileged role that bypasses RLS.
+CREATE POLICY tenant_users ON users
+    USING (id = current_setting('app.current_user_id')::uuid);
+
+CREATE POLICY tenant_email_tokens ON email_tokens
+    USING (user_id = current_setting('app.current_user_id')::uuid);
+
 CREATE POLICY tenant_photos ON photos
     USING (user_id = current_setting('app.current_user_id')::uuid);
 
@@ -629,6 +664,8 @@ CREATE POLICY tenant_albums ON albums
 CREATE POLICY tenant_album_photos ON album_photos
     USING (user_id = current_setting('app.current_user_id')::uuid);
 
+-- NOTE: Public share-link validation (unauthenticated) requires a privileged
+-- code path that bypasses RLS. See Phase 2 share endpoint design.
 CREATE POLICY tenant_shares ON shares
     USING (user_id = current_setting('app.current_user_id')::uuid);
 
@@ -751,7 +788,7 @@ Expected: FAIL
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'worker_db_user') THEN
-        CREATE ROLE worker_db_user WITH LOGIN PASSWORD 'changeme';
+        CREATE ROLE worker_db_user WITH LOGIN PASSWORD '${worker_db_user_password}';
     END IF;
 END
 $$;
@@ -795,4 +832,5 @@ git commit -m "feat: V3 Flyway migration — restricted worker_db_user role"
 | 1.0     | 2026-02-25 | Initial plan |
 | 2.0     | 2026-02-26 | Applied critical review v1 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-1.md`): **C1** — RLS test now uses `SET ROLE jpt_app`, `@Transactional`, and asserts `count == 0`. **C2** — JWT secret has no default in `application.yml`; dev fallback moved to `application-dev.yml`. **C3** — Flyway uses separate datasource (`spring.flyway.url/user/password`) exempt from RLS and `connection-init-sql`. **C4** — Reordered `UNIQUE` constraints before `CREATE TABLE album_photos`. **C5** — Added indexes on `email_tokens(user_id, purpose)` and `email_tokens(expires_at)`. **C6** — Added `user_id` to `photo_metadata` and `photo_keywords`; all RLS policies use direct equality. **M1** — Replaced `uuid_generate_v4()` with `gen_random_uuid()`; removed `uuid-ossp` extension. **M2** — Added comments noting passwords must be overridden in production. **M3** — Documented intentional lack of `ON DELETE CASCADE` on `photos.user_id`. **M4** — Added `CHECK (resource_type IN ('photo', 'album'))` to `shares`. **M5** — Added `UNIQUE NULLS NOT DISTINCT (user_id, name, parent_id)` to `keywords`. **M6** — Added `CHECK` constraint on `saved_searches.query_json`. **M7** — Disabled Redis auto-configuration in test profile. **M8** — `SchemaTest` now uses parameterized test for all 10 tables. **M9** — Specified `application-dev.yml` content. **Q2** — Documented database role purposes (jpt, jpt_app, worker_db_user). **Q4** — Added `-- SHA-256 hex` comment on `content_hash` column. |
 | 4.0     | 2026-02-26 | Applied critical review v3 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-3.md`): **C1** — RLS test finally block now unconditionally resets role before cleanup. **C2** — Documented `jpt` must be PostgreSQL superuser; verify Docker Compose creates it as such. **C3** — Added `@AfterEach` role reset to `WorkerDbUserTest`. **M1** — Removed fragile `user: ""`/`password: ""` from test Flyway config. **M2** — Added `photos_taken_at_idx` composite index for timeline queries. **M3** — Deferred `search_vector` field weighting to later phase. **M4** — Documented NULL content_hash uniqueness behavior. **M5** — Documented no cascade on `keywords.parent_id`. **M6** — Acknowledged composite FK overhead (monitoring). **M7** — Added note to verify MinIO version at implementation. **Q2** — Documented test/prod table owner divergence. **Q3** — Added cross-phase dependency note for `SET LOCAL` interceptor (Phase 2). |
+| 5.0     | 2026-02-26 | Applied security audit v1 findings (see `2026-02-26-saas-conversion-phase-1a-security-audit-1.md`): **#4** — Added RLS policy (`tenant_users`) on `users` table; login/registration/admin flows must use privileged role (Phase 2). **#2** — Replaced hardcoded `changeme` passwords with Flyway placeholders (`${jpt_app_password}`, `${worker_db_user_password}`); added `spring.flyway.placeholders` config to `application.yml` and `application-dev.yml`. **#5** — Added RLS policy (`tenant_email_tokens`) on `email_tokens` table; verification/reset flows must use privileged role (Phase 2). **#1** — Removed MinIO default credentials from `application.yml`; defaults moved to `application-dev.yml` only. **#3** — Added `assert_user_context()` PostgreSQL function in V2 that raises exception on nil/missing UUID; Phase 2 interceptor must call after `SET LOCAL`. **#6** — Added documentation comment on `shares` RLS noting public share-link validation needs privileged code path. **#7, #8** — Accepted as-is (low risk, already mitigated). **#9** — Confirmed false positive, no action. Updated RLS test to expect `tenant_users` and `tenant_email_tokens` policies. |
 | 3.0     | 2026-02-26 | Applied critical review v2 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-2.md`): **C1** — Added Task 1.0 with Gradle build configuration (`settings.gradle.kts`, root and api `build.gradle.kts`, wrapper). **C2** — RLS test restructured to use `TransactionTemplate` with two separate transactions instead of single `@Transactional`; cleanup block added. **C3** — Added `CHECK (id != '00000000-...')` constraint on `users` table to guarantee nil UUID can never be a real user. **C4** — Kept `email_verified` column; documented as deliberate deviation from design doc with atomicity requirement. **M1** — Added `spring.flyway.url/user/password` overrides to `application-test.yml`. **M3** — Narrowed `jpt_app` grants from `ALL PRIVILEGES` to `SELECT, INSERT, UPDATE, DELETE`. **M4** — Added `ALTER DEFAULT PRIVILEGES` for `jpt_app` so future tables get correct grants automatically. **M5** — RLS policy existence test now asserts exact set of policy names instead of `>= 8` count. **M6** — Added negative grant tests for `worker_db_user` (cannot access `users`, cannot `DELETE` from `photos`, cannot access `shares`). **M8** — Added `updated_at TIMESTAMPTZ` to `users`, `photos`, `albums`, `keywords`, and `shares` tables. |
