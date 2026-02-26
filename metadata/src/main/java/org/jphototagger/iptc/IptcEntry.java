@@ -1,17 +1,16 @@
 package org.jphototagger.iptc;
 
-import com.imagero.reader.iptc.IPTCEntry;
-import com.imagero.reader.iptc.IPTCEntryMeta;
 import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jphototagger.api.preferences.Preferences;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import org.jphototagger.lib.util.StringUtil;
 import org.openide.util.Lookup;
 
 /**
- * IPTC-Eintrag in einer Bilddatei. Dekodiert die Daten (getData()) als
- * ISO-8859-1-String.
+ * IPTC entry in an image file. Decodes data (getData()) as a string using
+ * the charset configured in Preferences (default ISO-8859-1).
  *
  * @author Elmar Baumann
  */
@@ -21,62 +20,72 @@ public final class IptcEntry {
     private final byte[] data;
     private final int recordNumber;
     private final int datasetNumber;
-    private final IPTCEntryMeta entryMeta;
+    private final IptcField entryMeta;
 
     /**
-     * Erzeugt ein neues Objekt.
+     * Creates a new IPTC entry.
      *
-     * @param entry IPTC-Eintrag
+     * @param name          human-readable field name
+     * @param data          raw data bytes
+     * @param recordNumber  IPTC record number
+     * @param datasetNumber IPTC dataset number
+     * @param entryMeta     the IPTC field enum constant
      */
-    public IptcEntry(IPTCEntry entry) {
-        if (entry == null) {
-            throw new NullPointerException("entry == null");
+    public IptcEntry(String name, byte[] data, int recordNumber, int datasetNumber, IptcField entryMeta) {
+        if (name == null) {
+            throw new NullPointerException("name == null");
+        }
+        if (data == null) {
+            throw new NullPointerException("data == null");
+        }
+        if (entryMeta == null) {
+            throw new NullPointerException("entryMeta == null");
         }
 
-        name = entry.getEntryMeta().getName();
-        data = Arrays.copyOf(entry.getData(), entry.getData().length);
-        recordNumber = entry.getRecordNumber();
-        datasetNumber = entry.getDataSetNumber();
-        entryMeta = entry.getEntryMeta();
+        this.name = name;
+        this.data = Arrays.copyOf(data, data.length);
+        this.recordNumber = recordNumber;
+        this.datasetNumber = datasetNumber;
+        this.entryMeta = entryMeta;
     }
 
     /**
-     * Liefert den Namen der IPTC-Eigenschaft.
+     * Returns the name of the IPTC property.
      *
-     * @return Name
+     * @return name
      */
     public String getName() {
         return name;
     }
 
     /**
-     * Liefert die Recordnummer der IPTC-Eigenschaft.
+     * Returns the record number of the IPTC property.
      *
-     * @return Recordnummer
+     * @return record number
      */
     public int getRecordNumber() {
         return recordNumber;
     }
 
     /**
-     * Liefert die Daten der IPTC-Eigenschaft.
+     * Returns the data of the IPTC property decoded as a string.
      *
-     * @return Daten
+     * @return data
      */
     public String getData() {
         return getEncodedData();
     }
 
     /**
-     * Liefert die Datensatznummer der IPTC-Eigenschaft.
+     * Returns the dataset number of the IPTC property.
      *
-     * @return Datensatznummer.
+     * @return dataset number
      */
     public int getDataSetNumber() {
         return datasetNumber;
     }
 
-    public IPTCEntryMeta getEntryMeta() {
+    public IptcField getEntryMeta() {
         return entryMeta;
     }
 

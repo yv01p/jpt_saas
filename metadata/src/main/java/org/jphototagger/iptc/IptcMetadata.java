@@ -1,17 +1,16 @@
 package org.jphototagger.iptc;
 
-import com.imagero.reader.MetadataUtils;
-import com.imagero.reader.iptc.IPTCConstants;
-import com.imagero.reader.iptc.IPTCEntry;
-import com.imagero.reader.iptc.IPTCEntryCollection;
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.Tag;
+import com.drew.metadata.iptc.IptcDirectory;
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jphototagger.domain.metadata.iptc.Iptc;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 
 /**
  * IPTC metadata of an image file.
@@ -34,12 +33,39 @@ public final class IptcMetadata {
 
         if ((imageFile != null) && imageFile.exists() && IptcSupport.INSTANCE.canReadIptc(imageFile)) {
             try {
-                LOGGER.log(Level.INFO, "Reading IPTC from image file ''{0}'', size {1} Bytes", new Object[]{imageFile, imageFile.length()});
+                LOGGER.log(Level.INFO, "Reading IPTC from image file ''{0}'', size {1} Bytes",
+                        new Object[]{imageFile, imageFile.length()});
 
-                IPTCEntryCollection collection = MetadataUtils.getIPTC(imageFile);
+                Metadata drewMetadata = ImageMetadataReader.readMetadata(imageFile);
 
-                if (collection != null) {
-                    addEntries(collection.getEntries(IPTCConstants.RECORD_APPLICATION), metadata);
+                for (IptcDirectory directory : drewMetadata.getDirectoriesOfType(IptcDirectory.class)) {
+                    for (Tag tag : directory.getTags()) {
+                        int tagType = tag.getTagType();
+
+                        // Skip version info (dataset 0 in record 2)
+                        if (tagType == 0) {
+                            continue;
+                        }
+
+                        IptcField field;
+                        try {
+                            field = IptcField.fromDatasetNumber(tagType);
+                        } catch (IllegalArgumentException ex) {
+                            LOGGER.log(Level.FINE, "Skipping unknown IPTC dataset number: {0}", tagType);
+                            continue;
+                        }
+
+                        byte[] rawData = directory.getByteArray(tagType);
+                        if (rawData == null) {
+                            continue;
+                        }
+
+                        IptcEntry entry = new IptcEntry(tag.getTagName(), rawData, 2, tagType, field);
+
+                        if (hasContent(entry) && !metadata.contains(entry)) {
+                            metadata.add(entry);
+                        }
+                    }
                 }
             } catch (Throwable t) {
                 LOGGER.log(Level.SEVERE, null, t);
@@ -49,34 +75,8 @@ public final class IptcMetadata {
         return metadata;
     }
 
-    private static void addEntries(IPTCEntry[][] entries, List<IptcEntry> metadata) {
-        if (entries != null) {
-            for (IPTCEntry[] entrie : entries) {
-                addEntries(entrie, metadata);
-            }
-        }
-    }
-
-    private static void addEntries(IPTCEntry[] entries, List<IptcEntry> metadata) {
-        if (entries != null) {
-            for (IPTCEntry currentEntry : entries) {
-                if ((currentEntry != null) && !isVersionInfo(currentEntry)) {
-                    IptcEntry newEntry = new IptcEntry(currentEntry);
-
-                    if (hasContent(newEntry) && !metadata.contains(newEntry)) {
-                        metadata.add(newEntry);
-                    }
-                }
-            }
-        }
-    }
-
     private static boolean hasContent(IptcEntry entry) {
         return (entry.getData() != null) && !entry.getData().trim().isEmpty();
-    }
-
-    private static boolean isVersionInfo(IPTCEntry entry) {
-        return (entry.getRecordNumber() == 2) && (entry.getDataSetNumber() == 0);
     }
 
     /**
@@ -86,7 +86,7 @@ public final class IptcMetadata {
      * @param  filter  filter
      * @return         filtered entries
      */
-    public static List<IptcEntry> getFilteredEntries(List<IptcEntry> entries, IPTCEntryMeta filter) {
+    public static List<IptcEntry> getFilteredEntries(List<IptcEntry> entries, IptcField filter) {
         if (entries == null) {
             throw new NullPointerException("entries == null");
         }
@@ -121,30 +121,13 @@ public final class IptcMetadata {
             iptc = new Iptc();
 
             for (IptcEntry iptcEntry : iptcEntries) {
-                IPTCEntryMeta iptcEntryMeta = iptcEntry.getEntryMeta();
+                IptcField iptcField = iptcEntry.getEntryMeta();
 
-                iptc.setValue(iptcEntryMeta, iptcEntry.getData());
+                iptc.setValue(iptcField, iptcEntry.getData());
             }
         }
 
         return iptc;
-    }
-
-    public static IPTCEntry findEntry(Collection<? extends IPTCEntry> entries, int recordNumber, int dataSetNumber) {
-        if (entries == null) {
-            throw new NullPointerException("entries == null");
-        }
-
-        for (IPTCEntry entry : entries) {
-            int recordNo = entry.getRecordNumber();
-            int dataSetNo = entry.getDataSetNumber();
-
-            if (recordNo == recordNumber && dataSetNo == dataSetNumber) {
-                return entry;
-            }
-        }
-
-        return null;
     }
 
     private IptcMetadata() {

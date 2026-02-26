@@ -1,12 +1,9 @@
 package org.jphototagger.exif;
 
-import com.imagero.reader.tiff.IFDEntry;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
 import jakarta.xml.bind.annotation.XmlRootElement;
@@ -212,24 +209,6 @@ public final class ExifTag {
         ifd = ExifIfd.UNDEFINED;
     }
 
-    public ExifTag(IFDEntry entry, ExifIfd ifd) {
-        if (entry == null) {
-            throw new NullPointerException("ifd == null");
-        }
-        if (ifd == null) {
-            throw new NullPointerException("ifdType == null");
-        }
-        tagId = entry.getTag();
-        valueCount = entry.getCount();
-        valueOffset = entry.getValueOffset();
-        intValueType = entry.getType();
-        name = entry.getEntryMeta().getName();
-        intByteOrder = entry.parent.getByteOrder();
-        rawValue = deepCopyRawValueOfIfdEntry(entry);
-        stringValue = entry.toString();
-        this.ifd = ifd;
-    }
-
     /**
      * @param tagId
      * @param intValueType
@@ -313,16 +292,6 @@ public final class ExifTag {
 
     public Properties parseProperties() {
         return Properties.parseInt(tagId);
-    }
-
-    private byte[] deepCopyRawValueOfIfdEntry(IFDEntry entry) {
-        try {
-            return Arrays.copyOf(entry.getRawValue(), entry.getRawValue().length);
-        } catch (Throwable t){
-            Logger.getLogger(ExifTag.class.getName()).log(Level.SEVERE, null, t);
-        }
-
-        return null;
     }
 
     @Override

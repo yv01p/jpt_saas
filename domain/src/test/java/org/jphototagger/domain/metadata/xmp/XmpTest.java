@@ -1,6 +1,6 @@
 package org.jphototagger.domain.metadata.xmp;
 
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import java.util.Arrays;
 import java.util.Collection;
 import org.jphototagger.domain.metadata.MetaDataValue;
@@ -147,7 +147,7 @@ public class XmpTest {
         String subject2 = "subject2";
         XmpDcCreatorMetaDataValue colCreator = XmpDcCreatorMetaDataValue.INSTANCE;
         XmpDcSubjectsSubjectMetaDataValue colSubject = XmpDcSubjectsSubjectMetaDataValue.INSTANCE;
-        IPTCEntryMeta headline = IPTCEntryMeta.HEADLINE;
+        IptcField headline = IptcField.HEADLINE;
 
         iptc.setValue(headline, title);
         iptc.setValue(IptcXmpMapping.getIptcEntryMetaOfXmpMetaDataValue(colCreator), creator);

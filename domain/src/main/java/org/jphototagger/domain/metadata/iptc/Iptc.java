@@ -1,6 +1,6 @@
 package org.jphototagger.domain.metadata.iptc;
 
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -14,9 +14,9 @@ import org.jphototagger.domain.metadata.mapping.IptcRepeatableValues;
  */
 public final class Iptc {
 
-    private final Map<IPTCEntryMeta, Object> valueOfEntryMeta = new HashMap<>();
+    private final Map<IptcField, Object> valueOfEntryMeta = new HashMap<>();
 
-    public Object getValue(IPTCEntryMeta iptcEntry) {
+    public Object getValue(IptcField iptcEntry) {
         if (iptcEntry == null) {
             throw new NullPointerException("iptcEntry == null");
         }
@@ -37,7 +37,7 @@ public final class Iptc {
      * @param iptcEntry IPTC entry
      * @param value     value of the entry
      */
-    public void setValue(IPTCEntryMeta iptcEntry, Object value) {
+    public void setValue(IptcField iptcEntry, Object value) {
         if (iptcEntry == null) {
             throw new NullPointerException("iptcEntry == null");
         }
@@ -56,7 +56,7 @@ public final class Iptc {
     }
 
     @SuppressWarnings("unchecked")
-    private Collection<? super Object> collectionReference(IPTCEntryMeta meta) {
+    private Collection<? super Object> collectionReference(IptcField meta) {
         Object o = valueOfEntryMeta.get(meta);
 
         return (o instanceof Collection<?>)
@@ -65,7 +65,7 @@ public final class Iptc {
     }
 
     @SuppressWarnings("unchecked")
-    private void addToCollection(IPTCEntryMeta meta, Object o) {
+    private void addToCollection(IptcField meta, Object o) {
         Collection<? super Object> collection = collectionReference(meta);
 
         if (collection == null) {

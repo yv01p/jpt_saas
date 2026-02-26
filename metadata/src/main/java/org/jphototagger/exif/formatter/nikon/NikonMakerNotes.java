@@ -1,7 +1,9 @@
 package org.jphototagger.exif.formatter.nikon;
 
-import com.imagero.reader.tiff.ImageFileDirectory;
-import com.imagero.reader.tiff.TiffReader;
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.Tag;
+import com.drew.metadata.exif.makernotes.NikonType2MakernoteDirectory;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -69,10 +71,10 @@ public final class NikonMakerNotes implements ExifMakerNotes {
             throw new NullPointerException("makerNoteTag == null");
         }
 
-        add(makerNoteTag, exifTags);
+        add(file, makerNoteTag, exifTags);
     }
 
-    private void add(ExifTag exifMakerNote, ExifTags exifTags) {
+    private void add(File file, ExifTag exifMakerNote, ExifTags exifTags) {
         assert exifMakerNote.parseProperties().equals(ExifTag.Properties.MAKER_NOTE);
 
         NikonMakerNote nikonMakerNote = NikonMakerNotes.get(exifTags, exifMakerNote.getRawValue());
@@ -82,20 +84,31 @@ public final class NikonMakerNotes implements ExifMakerNotes {
         }
 
         List<ExifTag> allMakerNoteTags = new ArrayList<>();
-        int offset = nikonMakerNote.getByteOffsetToIfd();
 
         try {
-            byte[] raw = exifMakerNote.getRawValue();
-            byte[] bytes = new byte[raw.length - offset];
+            Metadata metadata = ImageMetadataReader.readMetadata(file);
+            NikonType2MakernoteDirectory directory = metadata.getFirstDirectoryOfType(NikonType2MakernoteDirectory.class);
 
-            System.arraycopy(raw, offset, bytes, 0, bytes.length);
+            if (directory != null) {
+                for (Tag tag : directory.getTags()) {
+                    int tagType = tag.getTagType();
+                    byte[] rawValue = directory.getByteArray(tagType);
+                    String stringValue = tag.getDescription();
+                    String name = tag.getTagName();
 
-            TiffReader r = new TiffReader(bytes);
-            ImageFileDirectory ifd = r.getIFD(0);
-            int count = ifd.getEntryCount();
+                    ExifTag exifTag = new ExifTag(
+                            tagType,
+                            7, // UNDEFINED
+                            1,
+                            -1L,
+                            rawValue,
+                            stringValue,
+                            18761, // little endian
+                            name,
+                            ExifIfd.MAKER_NOTE);
 
-            for (int i = 0; i < count; i++) {
-                allMakerNoteTags.add(new ExifTag(ifd.getEntryAt(i), ExifIfd.MAKER_NOTE));
+                    allMakerNoteTags.add(exifTag);
+                }
             }
 
             exifTags.addMakerNoteTags(nikonMakerNote.getDisplayableMakerNotesOf(allMakerNoteTags));

@@ -1,14 +1,14 @@
 package org.jphototagger.xmp;
 
-import com.adobe.xmp.XMPException;
-import com.adobe.xmp.XMPIterator;
-import com.adobe.xmp.XMPMeta;
-import com.adobe.xmp.XMPMetaFactory;
-import com.adobe.xmp.options.IteratorOptions;
-import com.adobe.xmp.options.PropertyOptions;
-import com.adobe.xmp.options.SerializeOptions;
-import com.adobe.xmp.properties.XMPPropertyInfo;
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import com.adobe.internal.xmp.XMPException;
+import com.adobe.internal.xmp.XMPIterator;
+import com.adobe.internal.xmp.XMPMeta;
+import com.adobe.internal.xmp.XMPMetaFactory;
+import com.adobe.internal.xmp.options.IteratorOptions;
+import com.adobe.internal.xmp.options.PropertyOptions;
+import com.adobe.internal.xmp.options.SerializeOptions;
+import com.adobe.internal.xmp.properties.XMPPropertyInfo;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -222,15 +222,15 @@ public final class XmpMetadata {
     }
 
     /**
-     * Returns all {@code XMPPropertyInfo}s matching a {@code IPTCEntryMeta}.
+     * Returns all {@code XMPPropertyInfo}s matching a {@code IptcField}.
      *
-     * @param matchingIptcEntryMeta IPTC entry metadata
+     * @param matchingIptcEntryMeta IPTC field
      * @param propertyInfos arbitrary property infos
      * @return property infos of
      * <code>propertyInfos</code> matching that metadata
      */
     public static List<XMPPropertyInfo> filterPropertyInfosOfIptcEntryMeta(List<XMPPropertyInfo> propertyInfos,
-            IPTCEntryMeta matchingIptcEntryMeta) {
+            IptcField matchingIptcEntryMeta) {
         if (propertyInfos == null) {
             throw new NullPointerException("propertyInfos == null");
         }

@@ -1,11 +1,11 @@
 package org.jphototagger.image.thumbnail;
 
-import com.imagero.reader.IOParameterBlock;
-import com.imagero.reader.ImageProcOptions;
-import com.imagero.reader.ImageReader;
-import com.imagero.reader.Imagero;
 import java.awt.Component;
+import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.imageio.ImageIO;
 import org.bushe.swing.event.annotation.AnnotationProcessor;
 import org.bushe.swing.event.annotation.EventSubscriber;
 import org.jphototagger.api.preferences.Preferences;
@@ -82,17 +83,23 @@ public final class DcrawThumbnailCreator implements ThumbnailCreator, ExternalTh
         if (output != null && !output.hasStdErrBytes() && output.hasStdOutBytes()) {
             try {
                 int maxLength = ThumbnailCreatorService.readMaxThumbnailWidthFromPreferences();
-                IOParameterBlock ioParamBlock = new IOParameterBlock();
-                ImageProcOptions procOptions = new ImageProcOptions();
-                ioParamBlock.setSource(output.getStdOutBytes());
-                procOptions.setSource(ioParamBlock);
-                procOptions.setScale(maxLength);
-                Image image = Imagero.readImage(procOptions);
-                ImageReader reader = procOptions.getImageReader();
-                if (reader != null) {
-                    reader.close();
+                BufferedImage image = ImageIO.read(new ByteArrayInputStream(output.getStdOutBytes()));
+                if (image != null) {
+                    int origWidth = image.getWidth();
+                    int origHeight = image.getHeight();
+                    double factor = Math.max(origWidth, origHeight) / (double) maxLength;
+                    if (factor > 1.0) {
+                        int scaledWidth = (int) (origWidth / factor);
+                        int scaledHeight = (int) (origHeight / factor);
+                        BufferedImage scaled = new BufferedImage(scaledWidth, scaledHeight, BufferedImage.TYPE_INT_RGB);
+                        Graphics2D g = scaled.createGraphics();
+                        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                        g.drawImage(image, 0, 0, scaledWidth, scaledHeight, null);
+                        g.dispose();
+                        return scaled;
+                    }
+                    return image;
                 }
-                return image;
             } catch (Throwable t) {
                 LOGGER.log(Level.SEVERE, null, t);
             }

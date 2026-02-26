@@ -1,6 +1,6 @@
 package org.jphototagger.xmp;
 
-import com.adobe.xmp.properties.XMPPropertyInfo;
+import com.adobe.internal.xmp.properties.XMPPropertyInfo;
 import java.io.File;
 import java.net.URL;
 import java.util.Arrays;

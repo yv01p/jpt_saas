@@ -12,5 +12,4 @@ dependencies {
     implementation(libs.jakarta.xml.bind.api)
     runtimeOnly(libs.jaxb.runtime)
     implementation(libs.xmpcore)
-    implementation(files("../Libraries/ImgrRdr.jar"))            // com.imagero.reader.iptc
 }

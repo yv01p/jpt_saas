@@ -1,20 +1,17 @@
 package org.jphototagger.image.thumbnail;
 
-import com.imagero.reader.IOParameterBlock;
-import com.imagero.reader.ImageProcOptions;
-import com.imagero.reader.ImageReader;
-import com.imagero.reader.Imagero;
-import com.imagero.reader.ReaderFactory;
-import com.imagero.reader.tiff.TiffReader;
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.exif.ExifThumbnailDirectory;
 import java.awt.Container;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.MediaTracker;
 import java.awt.RenderingHints;
-import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
-import java.awt.image.ImageProducer;
+import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.RandomAccessFile;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.imageio.ImageIO;
@@ -29,20 +26,8 @@ final class ThumbnailUtil {
 
     private static final Logger LOGGER = Logger.getLogger(ThumbnailUtil.class.getName());
 
-    private static class ImageAndReader {
-
-        private final Image image;
-        private final ImageReader imageReader;
-
-        private ImageAndReader(Image image, ImageReader imageReader) {
-            this.image = image;
-            this.imageReader = imageReader;
-        }
-    }
-
     static Image getEmbeddedThumbnail(File file) {
-        ImageAndReader imageAndReader = getEmbeddedThumbnailWithReader(file);
-        Image thumbnail = imageAndReader.image;
+        Image thumbnail = getEmbeddedThumbnailImage(file);
         Image rotatedThumbnail = thumbnail;
         if (thumbnail != null) {
             ExifInfo exifInfo = Lookup.getDefault().lookup(ExifInfo.class);
@@ -50,45 +35,39 @@ final class ThumbnailUtil {
             LOGGER.log(Level.INFO, "Rotating extracted thumbnail that was embedded file ''{0}''", file);
             rotatedThumbnail = ImageTransform.rotate(thumbnail, rotateAngle);
         }
-        closeReader(imageAndReader.imageReader);    // Needs to be open for calling ImageTransform.rotate()
         return rotatedThumbnail;
     }
 
-    private static ImageAndReader getEmbeddedThumbnailWithReader(File file) {
-        Image thumbnail = null;
-        ImageReader reader = null;
+    private static Image getEmbeddedThumbnailImage(File file) {
         try {
             LOGGER.log(Level.INFO, "Reading embedded thumbnail from image file ''{0}'', size {1} Bytes", new Object[]{file, file.length()});
-            reader = ReaderFactory.createReader(file);
-            if (reader instanceof TiffReader) {
-                TiffReader tiffReader = (TiffReader) reader;
-                if (tiffReader.getThumbnailCount() > 0) {
-                    ImageProducer thumbnailProducer = tiffReader.getThumbnail(0);
-                    thumbnail = Toolkit.getDefaultToolkit().createImage(thumbnailProducer);
+            Metadata metadata = ImageMetadataReader.readMetadata(file);
+            ExifThumbnailDirectory thumbnailDirectory = metadata.getFirstDirectoryOfType(ExifThumbnailDirectory.class);
+            if (thumbnailDirectory != null) {
+                Integer offset = thumbnailDirectory.getAdjustedThumbnailOffset();
+                Integer length = thumbnailDirectory.getInteger(ExifThumbnailDirectory.TAG_THUMBNAIL_LENGTH);
+                if (offset != null && length != null && length > 0) {
+                    byte[] thumbnailData = new byte[length];
+                    try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+                        raf.seek(offset);
+                        raf.readFully(thumbnailData);
+                    }
+                    return ImageIO.read(new ByteArrayInputStream(thumbnailData));
                 }
-            } else {
-                IOParameterBlock ioParamBlock = new IOParameterBlock();
-                ioParamBlock.setSource(file);
-                thumbnail = Imagero.getThumbnail(ioParamBlock, 0);
             }
         } catch (Throwable t) {
             LOGGER.log(Level.SEVERE, null, t);
-            return new ImageAndReader(null, null);
         }
-        return new ImageAndReader(thumbnail, reader);
+        return null;
     }
 
-    static Image createThumbnailWithImagero(File file, int maxLength) {
+    static Image createThumbnailFromFullImage(File file, int maxLength) {
         try {
             LOGGER.log(Level.INFO, "Creating thumbnail from image file ''{0}'', size of image file is {1} Bytes", new Object[]{file, file.length()});
-            IOParameterBlock ioParamBlock = new IOParameterBlock();
-            ImageProcOptions procOptions = new ImageProcOptions();
-            ioParamBlock.setSource(file);
-            procOptions.setSource(ioParamBlock);
-            procOptions.setScale(maxLength);
-            Image image = Imagero.readImage(procOptions);
-            closeReader(procOptions.getImageReader());
-            return image;
+            BufferedImage image = ImageIO.read(file);
+            if (image != null) {
+                return stepScaleImage(image, maxLength, 0.5);
+            }
         } catch (Throwable t) {
             LOGGER.log(Level.SEVERE, null, t);
         }
@@ -209,12 +188,6 @@ final class ThumbnailUtil {
             LOGGER.log(Level.SEVERE, null, t);
         }
         return image;
-    }
-
-    private static void closeReader(ImageReader reader) {
-        if (reader != null) {
-            reader.close();
-        }
     }
 
     private ThumbnailUtil() {

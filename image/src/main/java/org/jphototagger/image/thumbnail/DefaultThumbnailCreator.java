@@ -81,7 +81,7 @@ public final class DefaultThumbnailCreator implements ThumbnailCreator {
             thumbnail = ThumbnailUtil.createThumbnailWithJavaImageIO(file, maxLength);
         }
         if (thumbnail == null && !isRawFile(file)) {
-            thumbnail = ThumbnailUtil.createThumbnailWithImagero(file, maxLength);
+            thumbnail = ThumbnailUtil.createThumbnailFromFullImage(file, maxLength);
         }
         return thumbnail;
     }

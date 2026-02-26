@@ -1,6 +1,6 @@
 package org.jphototagger.domain.metadata.xmp;
 
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -203,7 +203,7 @@ public final class Xmp implements TextEntryListener {
         List<IPTCEntryMetaDataValue> mappings = IptcXmpMapping.getAllMappings();
         for (IPTCEntryMetaDataValue mapping : mappings) {
             MetaDataValue xmpMetaDataValue = mapping.getMetaDataValue();
-            IPTCEntryMeta iptcEntryMeta = IptcXmpMapping.getIptcEntryMetaOfXmpMetaDataValue(xmpMetaDataValue);
+            IptcField iptcEntryMeta = IptcXmpMapping.getIptcEntryMetaOfXmpMetaDataValue(xmpMetaDataValue);
             Object iptcValue = iptc.getValue(iptcEntryMeta);
             if (iptcValue != null) {
                 if (iptcValue instanceof String) {

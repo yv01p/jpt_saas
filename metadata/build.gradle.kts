@@ -12,7 +12,6 @@ dependencies {
     implementation(libs.metadata.extractor)
     implementation(libs.xmpcore)
     implementation(libs.jaxb.runtime)
-    implementation(files("../Libraries/ImgrRdr.jar"))
     implementation(files("../Libraries/eventbus.jar"))
     implementation(files("../Libraries/mapdb.jar"))
     implementation(libs.netbeans.lookup)

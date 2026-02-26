@@ -4,6 +4,10 @@ import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.Tag;
+import com.drew.metadata.exif.ExifIFD0Directory;
+import com.drew.metadata.exif.ExifInteropDirectory;
+import com.drew.metadata.exif.ExifSubIFDDirectory;
+import com.drew.metadata.exif.GpsDirectory;
 import java.io.File;
 import java.nio.ByteOrder;
 import java.util.Collections;
@@ -23,7 +27,7 @@ import org.openide.util.lookup.ServiceProvider;
 /**
  * @author Elmar Baumann
  */
-@ServiceProvider(service = ExifTagsProvider.class, position = 100)
+@ServiceProvider(service = ExifTagsProvider.class, position = 0)
 public final class MetaDataExtractorExifMetadataReader implements ExifTagsProvider {
 
     private static final Logger LOGGER = Logger.getLogger(MetaDataExtractorExifMetadataReader.class.getName());
@@ -31,10 +35,35 @@ public final class MetaDataExtractorExifMetadataReader implements ExifTagsProvid
     private static final Map<String, Integer> BYTE_ORDER_OF_FILENAME_SUFFIX = new HashMap<>(); //18761 == little endian, 19789 == big endian
 
     static {
-        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("orf");
-        BYTE_ORDER_OF_FILENAME_SUFFIX.put("orf", 18761);
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("arw");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("crw");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("cr2");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("dcr");
         SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("dng");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("jpg");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("jpeg");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("mrw");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("nef");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("orf");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("thm");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("tif");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("tiff");
+        SUPPORTED_FILENAME_SUFFIXES_LOWERCASE.add("srw");
+
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("arw", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("crw", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("cr2", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("dcr", 18761);
         BYTE_ORDER_OF_FILENAME_SUFFIX.put("dng", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("jpg", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("jpeg", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("mrw", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("nef", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("orf", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("thm", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("tif", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("tiff", 18761);
+        BYTE_ORDER_OF_FILENAME_SUFFIX.put("srw", 18761);
     }
 
     @Override
@@ -56,11 +85,12 @@ public final class MetaDataExtractorExifMetadataReader implements ExifTagsProvid
             Metadata metadata = ImageMetadataReader.readMetadata(fromFile);
             String suffix = FileUtil.getSuffix(fromFile).toLowerCase();
             for (Directory directory : metadata.getDirectories()) {
+                ExifIfd ifdType = detectIfdType(directory);
                 for (Tag tag : directory.getTags()) {
                     int tagId = tag.getTagType();
                     Properties exifProperties = ExifTag.Properties.parseInt(tagId);
                     if (exifProperties != ExifTag.Properties.UNKNOWN) {
-                        int byteOrderValue = BYTE_ORDER_OF_FILENAME_SUFFIX.get(suffix);
+                        int byteOrderValue = detectByteOrder(metadata, suffix);
                         ByteOrder byteOrder = byteOrderValue == 0x4949 ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN;
                         byte[] rawValue = getRawValue(directory, exifProperties, byteOrder);
                         if (rawValue != null) {
@@ -75,9 +105,22 @@ public final class MetaDataExtractorExifMetadataReader implements ExifTagsProvid
                                     rawValue,
                                     tag.toString(), byteOrderValue,
                                     tag.getTagName(),
-                                    ExifIfd.EXIF
+                                    ifdType
                                     );
-                            toExifTags.addExifTag(exifTag);
+                            switch (ifdType) {
+                                case GPS:
+                                    toExifTags.addGpsTag(exifTag);
+                                    break;
+                                case INTEROPERABILITY:
+                                    toExifTags.addInteroperabilityTag(exifTag);
+                                    break;
+                                case MAKER_NOTE:
+                                    toExifTags.addMakerNoteTag(exifTag);
+                                    break;
+                                default:
+                                    toExifTags.addExifTag(exifTag);
+                                    break;
+                            }
                         }
                     }
                 }
@@ -87,6 +130,28 @@ public final class MetaDataExtractorExifMetadataReader implements ExifTagsProvid
             throw new RuntimeException("Error while reading EXIF with MetaDataExtractor for file " + fromFile);
         }
         return toExifTags.getTagCount() - oldTagCount;
+    }
+
+    private ExifIfd detectIfdType(Directory directory) {
+        if (directory instanceof GpsDirectory) {
+            return ExifIfd.GPS;
+        } else if (directory instanceof ExifInteropDirectory) {
+            return ExifIfd.INTEROPERABILITY;
+        } else if (directory instanceof ExifSubIFDDirectory) {
+            return ExifIfd.EXIF;
+        } else if (directory instanceof ExifIFD0Directory) {
+            return ExifIfd.EXIF;
+        }
+        return ExifIfd.EXIF;
+    }
+
+    private int detectByteOrder(Metadata metadata, String suffix) {
+        Integer byteOrder = BYTE_ORDER_OF_FILENAME_SUFFIX.get(suffix);
+        if (byteOrder != null) {
+            return byteOrder;
+        }
+        // Default: little endian for most camera formats
+        return 18761;
     }
 
     private byte[] getRawValue(Directory directory, Properties exifProperties, ByteOrder byteOrder) {

@@ -1,6 +1,6 @@
 package org.jphototagger.domain.metadata.mapping;
 
-import com.imagero.reader.iptc.IPTCEntryMeta;
+import org.jphototagger.domain.metadata.iptc.IptcField;
 import org.jphototagger.domain.metadata.MetaDataValue;
 import org.jphototagger.lib.util.ObjectUtil;
 
@@ -9,10 +9,10 @@ import org.jphototagger.lib.util.ObjectUtil;
  */
 public final class IPTCEntryMetaDataValue {
 
-    private final IPTCEntryMeta iptcEntryMeta;
+    private final IptcField iptcEntryMeta;
     private final MetaDataValue metaDataValue;
 
-    public IPTCEntryMetaDataValue(IPTCEntryMeta iptcEntryMeta, MetaDataValue metaDataValue) {
+    public IPTCEntryMetaDataValue(IptcField iptcEntryMeta, MetaDataValue metaDataValue) {
         if (iptcEntryMeta == null) {
             throw new NullPointerException("iptcEntryMeta == null");
         }
@@ -21,7 +21,7 @@ public final class IPTCEntryMetaDataValue {
         this.metaDataValue = metaDataValue;
     }
 
-    public IPTCEntryMeta getIptcEntryMeta() {
+    public IptcField getIptcEntryMeta() {
         return iptcEntryMeta;
     }
 

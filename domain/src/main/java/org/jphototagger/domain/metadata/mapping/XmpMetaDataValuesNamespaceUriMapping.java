@@ -1,6 +1,6 @@
 package org.jphototagger.domain.metadata.mapping;
 
-import com.adobe.xmp.XMPConst;
+import com.adobe.internal.xmp.XMPConst;
 import java.util.HashMap;
 import java.util.Map;
 import org.jphototagger.domain.metadata.MetaDataValue;
