@@ -3,5 +3,5 @@ plugins {
 }
 
 dependencies {
-    // Core interfaces — minimal deps
+    implementation(libs.netbeans.lookup)
 }
