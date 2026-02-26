@@ -3,7 +3,26 @@ plugins {
 }
 
 dependencies {
-    // Lib has mostly JDK-only deps (Swing utilities, IO, etc.)
+    // Sibling modules
+    implementation(project(":jpt-api"))
+
+    // JAXB (Jakarta)
     implementation(libs.jakarta.xml.bind.api)
     runtimeOnly(libs.jaxb.runtime)
+
+    // NetBeans Lookup (org.openide.util.*)
+    implementation(libs.netbeans.lookup)
+
+    // Legacy jars from Libraries/
+    implementation(files("../Libraries/beansbinding.jar"))      // org.jdesktop.beansbinding, org.jdesktop.observablecollections
+    implementation(files("../Libraries/swingx-core.jar"))       // org.jdesktop.swingx
+    implementation(files("../Libraries/eventbus.jar"))          // org.bushe.swing
+    implementation(files("../Libraries/lucene-core.jar"))       // org.apache.lucene
+
+    // Resources module
+    implementation(project(":resources"))
+
+    // JUnit 4 tests via vintage engine
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
 }

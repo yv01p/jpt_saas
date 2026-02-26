@@ -22,6 +22,11 @@ sourceSets {
         // find <module>/src/main/java -type f ! -name '*.java' ! -name '*.properties' ! -name '*.xml'
         // Add any discovered extensions to this include list.
     }
+    test {
+        resources.srcDirs("src/test/java")
+        resources.include("**/*.properties", "**/*.xml", "**/*.html", "**/*")
+        resources.exclude("**/*.java")
+    }
 }
 
 tasks.withType<JavaCompile> {
