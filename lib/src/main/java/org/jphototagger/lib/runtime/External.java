@@ -154,6 +154,8 @@ public final class External {
         stdErrReaderThread.start();
         try {
             int processExitValue = process.waitFor();
+            stdOutReaderThread.join();
+            stdErrReaderThread.join();
             byte[] stdOutBytes = stdOutStreamReader.readStreamBytes;
             byte[] stdErrBytes = stdErrStreamReader.readStreamBytes;
             return new ProcessResult(stdOutBytes, stdErrBytes, processExitValue);
@@ -177,6 +179,8 @@ public final class External {
         stdErrReaderThread.start();
         try {
             int processExitValue = process.waitFor();
+            stdOutReaderThread.join();
+            stdErrReaderThread.join();
             byte[] stdOutBytes = stdOutStreamReader.readStreamBytes;
             byte[] stdErrBytes = stdErrStreamReader.readStreamBytes;
             return new ProcessResult(stdOutBytes, stdErrBytes, processExitValue);

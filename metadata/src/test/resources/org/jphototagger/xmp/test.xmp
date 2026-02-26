@@ -29,7 +29,11 @@
           <rdf:li xml:lang="x-default">dc:description</rdf:li>
         </rdf:Alt>
       </dc:description>
-      <dc:creator>dc:creator</dc:creator>
+      <dc:creator>
+        <rdf:Seq>
+          <rdf:li>dc:creator</rdf:li>
+        </rdf:Seq>
+      </dc:creator>
       <dc:rights>
         <rdf:Alt>
           <rdf:li xml:lang="x-default">dc:rights</rdf:li>

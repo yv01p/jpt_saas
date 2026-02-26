@@ -283,10 +283,15 @@ public final class XmpProperties {
                     ? null
                     : value.toString().trim();
 
-            if ((xmpPropertyInfo.getNamespace() != null) && (xmpPropertyInfo.getPath() != null)
+            String path = xmpPropertyInfo.getPath();
+            String ns = xmpPropertyInfo.getNamespace();
+            boolean namespaceMatches = (ns != null && ns.equals(propertyValue.getNamespace().getUri()))
+                    || (ns == null && path != null && path.startsWith(propertyValue.getPath()));
+
+            if (path != null
                     && !xmpPropertyInfo.getOptions().isQualifier()
-                    && xmpPropertyInfo.getNamespace().equals(propertyValue.getNamespace().getUri())
-                    && xmpPropertyInfo.getPath().startsWith(propertyValue.getPath()) && (stringValue != null)
+                    && namespaceMatches
+                    && path.startsWith(propertyValue.getPath()) && (stringValue != null)
                     && !stringValue.isEmpty()) {
                 values.add(stringValue);
             }
