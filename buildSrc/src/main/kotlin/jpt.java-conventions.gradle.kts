@@ -24,7 +24,7 @@ sourceSets {
     }
     test {
         resources.srcDirs("src/test/java")
-        resources.include("**/*.properties", "**/*.xml", "**/*.html", "**/*")
+        // Test resources co-located with sources: include everything except Java files
         resources.exclude("**/*.java")
     }
 }
