@@ -31,7 +31,10 @@ dependencies {
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
-    // Testcontainers deferred to Phase 1a when server tests are written
+    testImplementation(platform(libs.testcontainers.bom))
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:junit-jupiter")
 }
 
 // No main class in Phase 0 — disable bootJar to prevent build failure
