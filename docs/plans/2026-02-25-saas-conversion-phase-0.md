@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 0: Java Upgrade & Gradle Migration
 
-> **Version:** 1.6
+> **Version:** 1.7
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate existing JPhotoTagger modules to a Gradle 8 multi-module build and compile/test on Java 21. This phase covers the core modules needed for compilation; desktop-only modules are deferred.
@@ -36,6 +36,7 @@ sdk install gradle 8.8               # or: brew install gradle
 - `domain` (from `Domain/`) — 236 files
 - `metadata` (from `Exif/`, `Iptc/`, `XMP/`) — 102 files consolidated
 - `repositories` (from `Repositories/HSQLDB/`) — 73 files
+- `resources` (from `Resources/`) — required by `lib` (UI factory, icons, localized strings)
 - `image` (from `Image/`) — 15 files
 - `shared` — new, shared DTOs placeholder
 - `server` — new, Spring Boot REST API stub
@@ -45,7 +46,7 @@ sdk install gradle 8.8               # or: brew install gradle
 - `Program/` (421 files — main desktop entry point, Swing wiring)
 - `Modules/*` (11 sub-modules: FindDuplicates, ImportFiles, Synonyms, etc.)
 - `Plugins/`, `ExportersImporters/`, `UserServices/`
-- `KML/`, `LookAndFeels/`, `Localization/`, `Resources/`
+- `KML/`, `LookAndFeels/`, `Localization/`
 
 These will be addressed if/when SaaS phases require their functionality.
 
@@ -179,7 +180,7 @@ repositories {
 ```kotlin
 rootProject.name = "jpt-saas"
 
-include("lib", "jpt-api", "domain", "metadata", "image", "repositories", "shared", "server", "worker")
+include("lib", "jpt-api", "domain", "metadata", "image", "repositories", "resources", "shared", "server", "worker")
 ```
 
 **Step 6: Create root `build.gradle.kts`**
@@ -418,56 +419,11 @@ git add settings.gradle.kts build.gradle.kts buildSrc/ gradle/ */build.gradle.kt
 git commit -m "build: migrate from Ant to Gradle 8 multi-module project with convention plugins"
 ```
 
-### Task 0.2: Migrate Lib Module Sources to Gradle Layout
-
-**Files:**
-- Move: `Lib/src/org/...` → `lib/src/main/java/org/...`
-- Move: `Lib/test/org/...` → `lib/src/test/java/org/...`
-
-**Step 1: Create Gradle-standard directory structure and copy sources**
+### Task 0.2: Migrate API Module Sources to Gradle Layout
 
 > **Note (applies to all module migrations 0.2–0.7):** Before copying test sources, verify the test directory layout with `ls`. If a module uses `test/java/org/` instead of `test/org/`, adjust the copy path accordingly to avoid placing sources in the wrong location.
 
-```bash
-mkdir -p lib/src/main/java lib/src/test/java
-cp -r Lib/src/org lib/src/main/java/
-[ -d Lib/test ] && cp -r Lib/test/org lib/src/test/java/
-```
-
-**Step 2: Migrate JAXB imports from `javax.xml.bind` to `jakarta.xml.bind`**
-
-Find and replace all `javax.xml.bind` imports in `lib/src/`:
-```bash
-find lib/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
-```
-
-Review the diff to verify only import statements were changed (not string literals, comments, or XML namespace URIs):
-```bash
-git diff -- lib/src/
-```
-
-**Step 3: Verify lib module compiles**
-
-Run: `./gradlew :lib:compileJava`
-Expected: BUILD SUCCESSFUL
-
-**Step 4: Fix any Java 21 compilation errors in lib**
-
-Common issues: `sun.*` imports, removed APIs, deprecated methods. Fix each error one at a time.
-
-**Step 5: Run lib tests**
-
-Run: `./gradlew :lib:test`
-Expected: All tests pass
-
-**Step 6: Commit**
-
-```bash
-git add lib/
-git commit -m "build: migrate Lib module to Gradle layout, compile on Java 21"
-```
-
-### Task 0.3: Migrate API Module Sources to Gradle Layout
+> **Ordering note:** jpt-api is migrated before lib because lib depends on jpt-api. jpt-api is mostly interfaces with minimal external dependencies.
 
 **Files:**
 - Move: `API/src/org/...` → `jpt-api/src/main/java/org/...`
@@ -481,23 +437,134 @@ cp -r API/src/org jpt-api/src/main/java/
 [ -d API/test ] && cp -r API/test/org jpt-api/src/test/java/
 ```
 
-**Step 2: Verify jpt-api module compiles**
+**Step 2: Update `jpt-api/build.gradle.kts` dependencies**
+
+jpt-api requires `netbeans-lookup` (for `CommonPreferences.java` which uses `org.openide.util.Lookup`):
+```kotlin
+dependencies {
+    implementation(libs.netbeans.lookup)
+}
+```
+
+**Step 3: Verify jpt-api module compiles**
 
 Run: `./gradlew :jpt-api:compileJava`
 Expected: BUILD SUCCESSFUL
 
-**Step 3: Fix any Java 21 compilation errors**
+**Step 4: Fix any Java 21 compilation errors**
 
-**Step 4: Run jpt-api tests**
+**Step 5: Run jpt-api tests**
 
 Run: `./gradlew :jpt-api:test`
 Expected: All tests pass
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git add jpt-api/
 git commit -m "build: migrate API module to jpt-api Gradle layout, compile on Java 21"
+```
+
+### Task 0.3: Migrate Lib Module Sources to Gradle Layout
+
+*Depends on: Task 0.2 (jpt-api) — lib imports `org.jphototagger.api.*`*
+
+**Files:**
+- Move: `Lib/src/org/...` → `lib/src/main/java/org/...`
+- Move: `Lib/test/org/...` → `lib/src/test/java/org/...`
+- Move: `Resources/src/org/...` → `resources/src/main/java/org/...` (lib depends on `org.jphototagger.resources.*`)
+
+**Step 1: Create Gradle-standard directory structure and copy sources**
+
+```bash
+mkdir -p lib/src/main/java lib/src/test/java
+cp -r Lib/src/org lib/src/main/java/
+[ -d Lib/test ] && cp -r Lib/test/org lib/src/test/java/
+```
+
+**Step 1a: Migrate Resources module (lib dependency)**
+
+```bash
+mkdir -p resources/src/main/java
+cp -r Resources/src/org resources/src/main/java/
+```
+
+Create `resources/build.gradle.kts`:
+```kotlin
+plugins {
+    id("jpt.java-conventions")
+}
+
+dependencies {
+    implementation(project(":jpt-api"))
+    implementation(libs.netbeans.lookup)
+}
+```
+
+Add `resources` to `settings.gradle.kts`:
+```kotlin
+include("lib", "jpt-api", "domain", "metadata", "image", "repositories", "resources", "shared", "server", "worker")
+```
+
+**Step 2: Update `lib/build.gradle.kts` with all dependencies**
+
+The plan's original `lib/build.gradle.kts` only had JAXB deps. Lib actually depends on jpt-api, resources, netbeans-lookup, and several legacy jars:
+
+```kotlin
+plugins {
+    id("jpt.java-conventions")
+}
+
+dependencies {
+    implementation(project(":jpt-api"))
+    implementation(project(":resources"))
+    implementation(libs.jakarta.xml.bind.api)
+    runtimeOnly(libs.jaxb.runtime)
+    implementation(libs.netbeans.lookup)
+    implementation(files("../Libraries/beansbinding.jar"))
+    implementation(files("../Libraries/swingx-core.jar"))
+    implementation(files("../Libraries/eventbus.jar"))
+    implementation(files("../Libraries/lucene-core.jar"))
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
+}
+```
+
+> **Note:** Legacy jar file dependencies (`files("../Libraries/...")`) are fragile relative paths. Replace with Maven Central coordinates in a future phase.
+
+> **Note:** Existing Lib tests use JUnit 4. The JUnit Vintage engine allows them to run on the JUnit 5 platform without rewriting.
+
+**Step 3: Migrate JAXB imports from `javax.xml.bind` to `jakarta.xml.bind`**
+
+Find and replace all `javax.xml.bind` imports in `lib/src/`:
+```bash
+find lib/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
+```
+
+Review the diff to verify only import statements were changed (not string literals, comments, or XML namespace URIs):
+```bash
+git diff -- lib/src/
+```
+
+**Step 4: Verify lib module compiles**
+
+Run: `./gradlew :lib:compileJava`
+Expected: BUILD SUCCESSFUL
+
+**Step 5: Fix any Java 21 compilation errors in lib**
+
+Common issues: `sun.*` imports, removed APIs, deprecated methods, Swing generic type changes (e.g., `Enumeration<TreeNode>` replacing raw `Enumeration`). Fix each error one at a time.
+
+**Step 6: Run lib tests**
+
+Run: `./gradlew :lib:test`
+Expected: All tests pass
+
+**Step 7: Commit**
+
+```bash
+git add lib/ resources/
+git commit -m "build: migrate Lib and Resources modules to Gradle layout, compile on Java 21"
 ```
 
 ### Task 0.4: Migrate Domain Module Sources to Gradle Layout
@@ -783,6 +850,7 @@ git tag v2.0.0-java21
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-02-26 | Post-implementation corrections from Tasks 0.2/0.3. Key changes: (1) Swapped Task 0.2 and 0.3 — jpt-api must be migrated before lib because lib imports `org.jphototagger.api.*`. (2) Moved `Resources/` from out-of-scope to in-scope — lib depends on `org.jphototagger.resources.UiFactory` and cannot compile without it. Added resources module creation as Step 1a of lib migration. (3) Updated lib's `build.gradle.kts` spec with all actual dependencies: `project(":jpt-api")`, `project(":resources")`, `libs.netbeans.lookup`, and 4 legacy jars (`beansbinding.jar`, `swingx-core.jar`, `eventbus.jar`, `lucene-core.jar`). (4) Added JUnit 4 Vintage engine dependency for existing lib tests. (5) Added `netbeans-lookup` dependency to jpt-api spec (`CommonPreferences` uses `org.openide.util.Lookup`). (6) Noted Swing generic type changes as common Java 21 fix pattern. |
 | 1.6 | 2026-02-25 | Applied Security Audit v1 findings. Key changes: (1) Updated Testcontainers from 1.19.7 to 1.20.4. (2) Added `gradle/verification-metadata.xml` generation step (Step 17a) to Task 0.1 for supply chain integrity. (3) Added `--validate-checksums` to Gradle wrapper bootstrap in Step 1. (4) Added `git diff` review notes after each `sed` JAXB migration command in Tasks 0.2, 0.4, 0.5. (5) Added sub-task 0.8.8: behavioral parity verification with sample-image JUnit tests for metadata-extractor replacement. (6) Added HSQLDB removal reminder to Phase 1a notes. |
 | 1.5 | 2026-02-25 | Applied Critical Implementation Review v4. Key changes: (1) Added `annotationProcessor(libs.netbeans.lookup)` to domain, metadata, image, and repositories modules — without this, `@ServiceProvider` annotations silently fail to generate `META-INF/services` files. (2) Added test directory layout verification note to Task 0.2 (applies to 0.2–0.7). (3) Added `ExifTag` `IFDEntry` constructor caller verification to sub-task 0.8.4. (4) Added `DcrawThumbnailCreator` Imagero vs. dcraw code path analysis note to sub-task 0.8.6. (5) Added co-located resource type verification comment to convention plugin. (6) Added Testcontainers version and BOM to version catalog for Phase 1a consistency. (7) Added `META-INF/services` generation verification step to Task 0.4 domain compilation. (8) Added `XmpMetadata.java` functional dependency check to sub-task 0.8.3. |
 | 1.4 | 2026-02-25 | Applied Critical Implementation Review v3. Key changes: (1) Added Prerequisites section (Java 21 JDK, Gradle 8.8+). (2) Added `libs` version catalog comment in convention plugin — accessor not available in buildSrc. (3) Disabled `bootJar` in server and worker modules — no main classes in Phase 0. (4) Added API mapping table and behavioral parity note to Task 0.8. (5) Added `getDatasetNumber()` and `fromDatasetNumber(int)` to IptcField enum spec. (6) Added dependency annotations to sub-tasks 0.8.2 and 0.8.3. (7) Added META-INF/services check to sub-task 0.8.4. (8) Added metadata-extractor version verification step to Task 0.5. (9) Added HSQLDB import verification step to Task 0.7. (10) Replaced `git add -A` with targeted staging in Task 0.8. (11) Added Program/ breakage note to sub-task 0.8.7. (12) Added Testcontainers BOM reminder for Phase 1a. |
