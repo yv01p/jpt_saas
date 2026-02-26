@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 0: Java Upgrade & Gradle Migration
 
-> **Version:** 1.4
+> **Version:** 1.5
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate existing JPhotoTagger modules to a Gradle 8 multi-module build and compile/test on Java 21. This phase covers the core modules needed for compilation; desktop-only modules are deferred.
@@ -94,6 +94,7 @@ bucket4j = "8.10.1"
 netbeans-lookup = "RELEASE220"
 jakarta-xml-bind = "4.0.2"
 jaxb-runtime = "4.0.5"
+testcontainers = "1.19.7"
 junit-jupiter = "5.10.2"
 
 [libraries]
@@ -110,6 +111,7 @@ netbeans-lookup = { module = "org.netbeans.api:org-openide-util-lookup", version
 jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", version.ref = "jakarta-xml-bind" }
 jaxb-runtime = { module = "org.glassfish.jaxb:jaxb-runtime", version.ref = "jaxb-runtime" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
@@ -139,6 +141,9 @@ sourceSets {
     main {
         resources.srcDirs("src/main/java")
         resources.include("**/*.properties", "**/*.xml")
+        // After each module migration, verify no other resource types are co-located:
+        // find <module>/src/main/java -type f ! -name '*.java' ! -name '*.properties' ! -name '*.xml'
+        // Add any discovered extensions to this include list.
     }
 }
 
@@ -219,6 +224,7 @@ dependencies {
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
     implementation(libs.netbeans.lookup)
+    annotationProcessor(libs.netbeans.lookup)
     implementation(libs.jakarta.xml.bind.api)
     runtimeOnly(libs.jaxb.runtime)
 }
@@ -239,6 +245,8 @@ dependencies {
     implementation(project(":jpt-api"))
     implementation(libs.metadata.extractor)
     implementation(libs.xmpcore)
+    implementation(libs.netbeans.lookup)
+    annotationProcessor(libs.netbeans.lookup)
 }
 ```
 
@@ -254,6 +262,8 @@ dependencies {
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
     implementation(libs.metadata.extractor)
+    implementation(libs.netbeans.lookup)
+    annotationProcessor(libs.netbeans.lookup)
 }
 ```
 
@@ -270,6 +280,8 @@ dependencies {
     implementation(project(":jpt-api"))
     implementation(project(":metadata"))
     implementation(project(":image"))
+    implementation(libs.netbeans.lookup)
+    annotationProcessor(libs.netbeans.lookup)
     runtimeOnly(libs.hsqldb)
 }
 ```
@@ -405,6 +417,8 @@ git commit -m "build: migrate from Ant to Gradle 8 multi-module project with con
 
 **Step 1: Create Gradle-standard directory structure and copy sources**
 
+> **Note (applies to all module migrations 0.2–0.7):** Before copying test sources, verify the test directory layout with `ls`. If a module uses `test/java/org/` instead of `test/org/`, adjust the copy path accordingly to avoid placing sources in the wrong location.
+
 ```bash
 mkdir -p lib/src/main/java lib/src/test/java
 cp -r Lib/src/org lib/src/main/java/
@@ -492,10 +506,12 @@ cp -r Domain/src/org domain/src/main/java/
 find domain/src -name "*.java" -exec grep -l "javax.xml.bind" {} \; | xargs sed -i 's/javax\.xml\.bind/jakarta.xml.bind/g'
 ```
 
-**Step 3: Verify domain module compiles**
+**Step 3: Verify domain module compiles and `@ServiceProvider` annotation processing works**
 
 Run: `./gradlew :domain:compileJava`
 Expected: BUILD SUCCESSFUL
+
+Verify `META-INF/services` files are generated: `find domain/build -path '*/META-INF/services/*' -print`. If empty, investigate NetBeans annotation processor compatibility with Java 21 and Gradle's annotation processing model.
 
 **Step 4: Fix any Java 21 compilation errors in domain**
 
@@ -667,11 +683,11 @@ Mechanical find-replace across 7 domain files: change `import com.imagero.reader
 
 *Depends on: 0.8.1*
 
-Rewrite `IptcMetadata.java` and `IptcEntry.java` in the metadata module to use metadata-extractor's `IptcDirectory` instead of Imagero's `MetadataUtils.getIPTC()`. Update `XmpMetadata.java` to remove Imagero import. Verify: `./gradlew :metadata:compileJava`
+Rewrite `IptcMetadata.java` and `IptcEntry.java` in the metadata module to use metadata-extractor's `IptcDirectory` instead of Imagero's `MetadataUtils.getIPTC()`. Before removing the Imagero import from `XmpMetadata.java`, check whether it's an unused import or a functional dependency — if functional, rewrite the dependent code path to use metadata-extractor/xmpcore equivalents. Verify: `./gradlew :metadata:compileJava`
 
 **Sub-task 0.8.4: Consolidate EXIF readers onto metadata-extractor**
 
-Expand the existing `MetaDataExtractorExifMetadataReader` to handle all image formats. Delete `ImageroExifMetadataReader`. Remove the `IFDEntry` constructor from `ExifTag` (only needed for Imagero integration). Check for and update any `META-INF/services` registration files that reference `ImageroExifMetadataReader`. Verify: `./gradlew :metadata:compileJava`
+Expand the existing `MetaDataExtractorExifMetadataReader` to handle all image formats. Delete `ImageroExifMetadataReader`. Before removing the `IFDEntry` constructor from `ExifTag`, verify no other callers exist: `grep -r 'new ExifTag.*IFDEntry\|ExifTag(.*IFDEntry' --include='*.java'`. If only `Program/` uses it, note the breakage (out of scope). Remove the constructor. Check for and update any `META-INF/services` registration files that reference `ImageroExifMetadataReader`. Verify: `./gradlew :metadata:compileJava`
 
 **Sub-task 0.8.5: Rewrite `NikonMakerNotes` to use metadata-extractor**
 
@@ -679,7 +695,7 @@ Replace Imagero's Nikon maker note parsing with metadata-extractor's native `Nik
 
 **Sub-task 0.8.6: Replace Imagero thumbnail APIs**
 
-Rewrite `ThumbnailUtil` and `DcrawThumbnailCreator` in the image module to use metadata-extractor's `ExifThumbnailDirectory` + `javax.imageio.ImageIO` instead of Imagero's thumbnail extraction. Verify: `./gradlew :image:compileJava`
+Before rewriting, read `DcrawThumbnailCreator` to determine which code paths use Imagero vs. the external `dcraw` tool — only replace the Imagero-dependent paths. Rewrite `ThumbnailUtil` and `DcrawThumbnailCreator` in the image module to use metadata-extractor's `ExifThumbnailDirectory` + `javax.imageio.ImageIO` instead of Imagero's thumbnail extraction. Verify: `./gradlew :image:compileJava`
 
 **Sub-task 0.8.7: Remove ImgrRdr.jar and verify clean build**
 
@@ -729,6 +745,7 @@ git tag v2.0.0-java21
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.5 | 2026-02-25 | Applied Critical Implementation Review v4. Key changes: (1) Added `annotationProcessor(libs.netbeans.lookup)` to domain, metadata, image, and repositories modules — without this, `@ServiceProvider` annotations silently fail to generate `META-INF/services` files. (2) Added test directory layout verification note to Task 0.2 (applies to 0.2–0.7). (3) Added `ExifTag` `IFDEntry` constructor caller verification to sub-task 0.8.4. (4) Added `DcrawThumbnailCreator` Imagero vs. dcraw code path analysis note to sub-task 0.8.6. (5) Added co-located resource type verification comment to convention plugin. (6) Added Testcontainers version and BOM to version catalog for Phase 1a consistency. (7) Added `META-INF/services` generation verification step to Task 0.4 domain compilation. (8) Added `XmpMetadata.java` functional dependency check to sub-task 0.8.3. |
 | 1.4 | 2026-02-25 | Applied Critical Implementation Review v3. Key changes: (1) Added Prerequisites section (Java 21 JDK, Gradle 8.8+). (2) Added `libs` version catalog comment in convention plugin — accessor not available in buildSrc. (3) Disabled `bootJar` in server and worker modules — no main classes in Phase 0. (4) Added API mapping table and behavioral parity note to Task 0.8. (5) Added `getDatasetNumber()` and `fromDatasetNumber(int)` to IptcField enum spec. (6) Added dependency annotations to sub-tasks 0.8.2 and 0.8.3. (7) Added META-INF/services check to sub-task 0.8.4. (8) Added metadata-extractor version verification step to Task 0.5. (9) Added HSQLDB import verification step to Task 0.7. (10) Replaced `git add -A` with targeted staging in Task 0.8. (11) Added Program/ breakage note to sub-task 0.8.7. (12) Added Testcontainers BOM reminder for Phase 1a. |
 | 1.0 | 2026-02-25 | Initial plan |
 | 1.1 | 2026-02-25 | Applied Critical Implementation Review v1. Key changes: (1) Added `lib` and `jpt-api` module migration tasks — Domain and Repositories depend on them. (2) Fixed Domain deps: requires `:lib`, `:jpt-api`, NetBeans Lookup (kept for Phase 0 compat, replaced by Spring DI in Phase 1). (3) Fixed Repositories deps: requires `:domain`, `:lib`, `:jpt-api`, HSQLDB as runtimeOnly. (4) Added `image` module migration task. (5) Renamed Spring Boot API module from `api/` to `server/` to avoid collision with existing `API/` directory. Renamed existing API interfaces module to `jpt-api/`. (6) Added Gradle wrapper bootstrap step. (7) Replaced `subprojects {}` block with convention plugin (`buildSrc/jpt.java-conventions.gradle.kts`). (8) Added `gradle/libs.versions.toml` version catalog; updated Spring Boot from 3.3.0 to 3.4.2. (9) Switched metadata merge from `cp -r` to `rsync -a` for safety. (10) Simplified ImgRdr audit task. (11) Added `.gitignore` entries for `.gradle/` and `build/`. (12) Narrowed scope: explicitly listed in-scope vs out-of-scope modules; changed goal from "full existing test suite" to "all migrated modules compile and pass their own tests." |
