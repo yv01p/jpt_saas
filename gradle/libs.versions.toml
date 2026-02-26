@@ -1,0 +1,35 @@
+[versions]
+spring-boot = "3.4.2"
+spring-dependency-management = "1.1.7"
+metadata-extractor = "2.19.0"
+xmpcore = "6.1.11"
+hsqldb = "2.7.2"
+minio = "8.5.9"
+tika = "2.9.2"
+jjwt = "0.12.5"
+bucket4j = "8.10.1"
+netbeans-lookup = "RELEASE220"
+jakarta-xml-bind = "4.0.2"
+jaxb-runtime = "4.0.5"
+testcontainers = "1.20.4"
+junit-jupiter = "5.10.2"
+
+[libraries]
+metadata-extractor = { module = "com.drewnoakes:metadata-extractor", version.ref = "metadata-extractor" }
+xmpcore = { module = "com.adobe.xmp:xmpcore", version.ref = "xmpcore" }
+hsqldb = { module = "org.hsqldb:hsqldb", version.ref = "hsqldb" }
+minio = { module = "io.minio:minio", version.ref = "minio" }
+tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
+jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
+jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
+bucket4j-redis = { module = "com.bucket4j:bucket4j-redis", version.ref = "bucket4j" }
+netbeans-lookup = { module = "org.netbeans.api:org-openide-util-lookup", version.ref = "netbeans-lookup" }
+jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", version.ref = "jakarta-xml-bind" }
+jaxb-runtime = { module = "org.glassfish.jaxb:jaxb-runtime", version.ref = "jaxb-runtime" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }

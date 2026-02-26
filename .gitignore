@@ -118,3 +118,5 @@
 /DeveloperSupport/scripts/JavaDeveloperSupport/nbproject/private/
 /DeveloperSupport/scripts/JavaDeveloperSupport/build/
 /DeveloperSupport/scripts/JavaDeveloperSupport/dist/
+.gradle/
+build/
