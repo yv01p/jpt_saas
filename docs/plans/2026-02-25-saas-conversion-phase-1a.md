@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 1a: Spring Boot Scaffold & Database
 
-> **Version:** 3.0
+> **Version:** 4.0
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Convert JPhotoTagger from a single-user Java Swing desktop app into a multi-user web SaaS application per the approved design (docs/plans/2026-02-24-saas-conversion-design.md).
@@ -14,9 +14,13 @@
 **All phases:** See `docs/plans/2026-02-25-saas-conversion-index.md` for the full phase list.
 
 **Database roles:**
-- `jpt` — superuser/owner role used by Flyway for schema migrations (exempt from RLS)
+- `jpt` — PostgreSQL superuser and table owner, used by Flyway for schema migrations (exempt from RLS; `SUPERUSER` attribute means `FORCE ROW LEVEL SECURITY` does not apply). Verify that Docker Compose `POSTGRES_USER=jpt` creates it with `SUPERUSER` — this is the PostgreSQL default.
 - `jpt_app` — non-superuser runtime role used by the API application (subject to RLS)
 - `worker_db_user` — restricted role used by the worker container (least privilege)
+
+**Cross-phase dependency:** The RLS policies defined in this phase are non-functional until the per-request `SET LOCAL app.current_user_id` interceptor is implemented in Phase 2 (auth/API layer). The `connection-init-sql` nil UUID is a safety net only.
+
+**Test environment note:** In Testcontainers, the default superuser (typically `test`) owns the tables, not `jpt`. Since `test` is a superuser, it bypasses RLS regardless of `FORCE ROW LEVEL SECURITY`. RLS is validated via `SET ROLE jpt_app`. This is a known test/prod divergence that does not affect test correctness.
 
 **Schema deviation notes:**
 - `users.email_verified BOOLEAN` — not in the design doc schema but kept as a deliberate optimization. The design doc derives verification from `email_tokens` table lookups; this flag avoids that join for hot-path checks. The verification endpoint must atomically update both the `email_tokens` record and set `email_verified = TRUE`. Update the design doc to reflect this addition.
@@ -86,7 +90,7 @@ dependencies {
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
-    implementation("io.minio:minio:8.5.14")
+    implementation("io.minio:minio:8.5.14")  // TODO: verify latest stable at implementation time
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
@@ -231,8 +235,6 @@ spring:
   flyway:
     enabled: true
     url: jdbc:tc:postgresql:16:///jpt
-    user: ""
-    password: ""
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
 
@@ -381,6 +383,9 @@ CREATE TABLE photos (
             coalesce(description, '')
         )
     ) STORED,
+    -- NOTE: UNIQUE allows multiple NULL content_hash per user (SQL NULL != NULL).
+    -- This is intentional: photos in 'pending' status have no hash yet.
+    -- Deduplication only applies after processing completes.
     CONSTRAINT uq_user_content_hash UNIQUE (user_id, content_hash)
 );
 
@@ -388,6 +393,7 @@ CREATE TABLE photos (
 -- Application must clean up photos (and MinIO objects) before deleting a user.
 
 CREATE INDEX photos_user_idx ON photos (user_id) WHERE deleted_at IS NULL;
+CREATE INDEX photos_taken_at_idx ON photos (user_id, taken_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX photos_search_idx ON photos USING GIN (search_vector);
 CREATE INDEX photos_deleted_idx ON photos (user_id, deleted_at) WHERE deleted_at IS NOT NULL;
 
@@ -409,6 +415,8 @@ CREATE TABLE keywords (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
     name VARCHAR(255) NOT NULL,
+    -- No ON DELETE CASCADE: deleting a parent keyword requires children to be
+    -- deleted or re-parented first. Application layer must handle tree restructuring.
     parent_id UUID REFERENCES keywords(id),
     updated_at TIMESTAMPTZ,
     CONSTRAINT uq_keyword_per_parent UNIQUE NULLS NOT DISTINCT (user_id, name, parent_id)
@@ -537,7 +545,8 @@ class RlsTest {
                 jdbc.execute("RESET ROLE");
             });
         } finally {
-            // Cleanup
+            // Unconditionally reset role before cleanup to avoid RLS filtering out deletes
+            try { jdbc.execute("RESET ROLE"); } catch (Exception ignored) {}
             jdbc.update("DELETE FROM photos WHERE id = ?", photoId);
             jdbc.update("DELETE FROM users WHERE id IN (?, ?)", userA, userB);
         }
@@ -660,6 +669,7 @@ git commit -m "feat: V2 Flyway migration — RLS policies on all tenant tables"
 // api/src/test/java/org/jphototagger/api/db/WorkerDbUserTest.java
 package org.jphototagger.api.db;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -675,6 +685,11 @@ class WorkerDbUserTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @AfterEach
+    void resetRole() {
+        try { jdbc.execute("RESET ROLE"); } catch (Exception ignored) {}
+    }
 
     @Test
     void workerDbUserRoleExists() {
@@ -779,4 +794,5 @@ git commit -m "feat: V3 Flyway migration — restricted worker_db_user role"
 |---------|------------|---------|
 | 1.0     | 2026-02-25 | Initial plan |
 | 2.0     | 2026-02-26 | Applied critical review v1 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-1.md`): **C1** — RLS test now uses `SET ROLE jpt_app`, `@Transactional`, and asserts `count == 0`. **C2** — JWT secret has no default in `application.yml`; dev fallback moved to `application-dev.yml`. **C3** — Flyway uses separate datasource (`spring.flyway.url/user/password`) exempt from RLS and `connection-init-sql`. **C4** — Reordered `UNIQUE` constraints before `CREATE TABLE album_photos`. **C5** — Added indexes on `email_tokens(user_id, purpose)` and `email_tokens(expires_at)`. **C6** — Added `user_id` to `photo_metadata` and `photo_keywords`; all RLS policies use direct equality. **M1** — Replaced `uuid_generate_v4()` with `gen_random_uuid()`; removed `uuid-ossp` extension. **M2** — Added comments noting passwords must be overridden in production. **M3** — Documented intentional lack of `ON DELETE CASCADE` on `photos.user_id`. **M4** — Added `CHECK (resource_type IN ('photo', 'album'))` to `shares`. **M5** — Added `UNIQUE NULLS NOT DISTINCT (user_id, name, parent_id)` to `keywords`. **M6** — Added `CHECK` constraint on `saved_searches.query_json`. **M7** — Disabled Redis auto-configuration in test profile. **M8** — `SchemaTest` now uses parameterized test for all 10 tables. **M9** — Specified `application-dev.yml` content. **Q2** — Documented database role purposes (jpt, jpt_app, worker_db_user). **Q4** — Added `-- SHA-256 hex` comment on `content_hash` column. |
+| 4.0     | 2026-02-26 | Applied critical review v3 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-3.md`): **C1** — RLS test finally block now unconditionally resets role before cleanup. **C2** — Documented `jpt` must be PostgreSQL superuser; verify Docker Compose creates it as such. **C3** — Added `@AfterEach` role reset to `WorkerDbUserTest`. **M1** — Removed fragile `user: ""`/`password: ""` from test Flyway config. **M2** — Added `photos_taken_at_idx` composite index for timeline queries. **M3** — Deferred `search_vector` field weighting to later phase. **M4** — Documented NULL content_hash uniqueness behavior. **M5** — Documented no cascade on `keywords.parent_id`. **M6** — Acknowledged composite FK overhead (monitoring). **M7** — Added note to verify MinIO version at implementation. **Q2** — Documented test/prod table owner divergence. **Q3** — Added cross-phase dependency note for `SET LOCAL` interceptor (Phase 2). |
 | 3.0     | 2026-02-26 | Applied critical review v2 findings (see `2026-02-25-saas-conversion-phase-1a-critical-review-2.md`): **C1** — Added Task 1.0 with Gradle build configuration (`settings.gradle.kts`, root and api `build.gradle.kts`, wrapper). **C2** — RLS test restructured to use `TransactionTemplate` with two separate transactions instead of single `@Transactional`; cleanup block added. **C3** — Added `CHECK (id != '00000000-...')` constraint on `users` table to guarantee nil UUID can never be a real user. **C4** — Kept `email_verified` column; documented as deliberate deviation from design doc with atomicity requirement. **M1** — Added `spring.flyway.url/user/password` overrides to `application-test.yml`. **M3** — Narrowed `jpt_app` grants from `ALL PRIVILEGES` to `SELECT, INSERT, UPDATE, DELETE`. **M4** — Added `ALTER DEFAULT PRIVILEGES` for `jpt_app` so future tables get correct grants automatically. **M5** — RLS policy existence test now asserts exact set of policy names instead of `>= 8` count. **M6** — Added negative grant tests for `worker_db_user` (cannot access `users`, cannot `DELETE` from `photos`, cannot access `shares`). **M8** — Added `updated_at TIMESTAMPTZ` to `users`, `photos`, `albums`, `keywords`, and `shares` tables. |
