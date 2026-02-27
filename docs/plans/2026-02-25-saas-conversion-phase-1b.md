@@ -1,6 +1,6 @@
 # JPhotoTagger SaaS Conversion — Phase 1b: Infrastructure — Docker Compose & Dockerfiles
 
-> **Version:** 3.0
+> **Version:** 4.0
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Convert JPhotoTagger from a single-user Java Swing desktop app into a multi-user web SaaS application per the approved design (docs/plans/2026-02-24-saas-conversion-design.md).
@@ -42,10 +42,15 @@ services:
     depends_on:
       api:
         condition: service_started
+    networks:
+      - frontend
     restart: unless-stopped
 
   api:
     build: ./api
+    networks:
+      - frontend
+      - backend
     environment:
       DB_URL: ${DB_URL}
       DB_USER: ${DB_USER}
@@ -81,6 +86,8 @@ services:
 
   worker:
     build: ./worker
+    networks:
+      - backend
     environment:
       DB_URL: ${WORKER_DB_URL}
       DB_USER: ${WORKER_DB_USER}
@@ -114,6 +121,8 @@ services:
 
   postgres:
     image: postgres:16
+    networks:
+      - backend
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -129,6 +138,8 @@ services:
 
   minio:
     image: minio/minio
+    networks:
+      - backend
     volumes:
       - minio_data:/data
     command: server /data
@@ -145,6 +156,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    networks:
+      - backend
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
@@ -157,6 +170,8 @@ services:
 
   backup:
     image: minio/mc
+    networks:
+      - backend
     restart: unless-stopped
     entrypoint: >
       /bin/sh -c "
@@ -184,6 +199,8 @@ services:
 
   pgbackup:
     build: ./pgbackup
+    networks:
+      - backend
     restart: unless-stopped
     user: "1000:1000"
     entrypoint: >
@@ -217,6 +234,8 @@ services:
 
   certbot:
     image: certbot/certbot
+    networks:
+      - frontend
     volumes:
       - certbot_certs:/etc/letsencrypt
       - certbot_www:/var/www/certbot
@@ -227,6 +246,11 @@ services:
       done"
 
   # Prometheus and Grafana — deferred to monitoring phase
+
+networks:
+  frontend:
+  backend:
+    internal: true
 
 volumes:
   postgres_data:
@@ -246,23 +270,23 @@ secrets:
 # docker-compose.dev.yml — local development overrides
 services:
   api:
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
 
   postgres:
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     environment:
       POSTGRES_DB: jpt
       POSTGRES_USER: jpt
       POSTGRES_PASSWORD: jpt
 
   minio:
-    ports: ["9000:9000", "9001:9001"]
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     environment:
       MINIO_BROWSER: "on"
     command: server /data --console-address ":9001"
 
   redis:
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
 
   # Don't run these in dev
   nginx:
@@ -280,6 +304,9 @@ services:
 
 ```bash
 # .env.example — copy to .env and fill in values
+# SECURITY NOTE: Secrets are passed via environment variables. This is acceptable for
+# single-operator deployment but should be migrated to Docker secrets before multi-tenant
+# production. See security audit: docs/plans/2026-02-26-saas-conversion-phase-1b-security-audit-1.md
 DB_URL=jdbc:postgresql://postgres:5432/jpt
 DB_USER=jpt
 DB_PASS=jpt
@@ -312,6 +339,11 @@ B2_ACCOUNT_KEY=
 Create a minimal nginx.conf that proxies to the API. This is a placeholder — the full nginx config with TLS, rate limiting, and security headers will be finalized in a later phase.
 
 ```nginx
+# ============================================================
+# WARNING: NOT FOR PRODUCTION — NO TLS, NO SECURITY HEADERS
+# See design doc v4.0 for full production nginx configuration.
+# ============================================================
+
 events { worker_connections 1024; }
 
 http {
@@ -411,11 +443,14 @@ tasks.bootJar {
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
+RUN addgroup -S appuser && adduser -S appuser -G appuser
+
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
 
 COPY build/libs/app.jar app.jar
 EXPOSE 8080
 
+USER appuser
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
 ```
 
@@ -501,6 +536,26 @@ git commit -m "infra: Dockerfiles for api, worker, pgbackup"
 ---
 
 ## Changelog
+
+### v4.0 (2026-02-26) — Post security audit
+
+Review document: `docs/plans/2026-02-26-saas-conversion-phase-1b-security-audit-1.md`
+
+**Issues fixed:**
+- **[#1] No Docker network segmentation** — Added `frontend` and `backend` (internal: true) networks; nginx/certbot on frontend, datastores on backend, api bridges both
+- **[#2] Dev ports bind 0.0.0.0** — All dev-exposed ports now bind to `127.0.0.1` (postgres, minio, redis, api)
+- **[#4] API Dockerfile runs as root** — Added non-root `appuser` user to API Dockerfile, matching worker pattern
+
+**Issues accepted with documentation:**
+- **[#3] Secrets via env vars** — Acceptable for single-operator deployment; added security notice to `.env.example`; plan migration to Docker secrets before multi-tenant production
+- **[#6] Nginx stub no TLS/headers** — Added prominent warning comment; placeholder by design, full config in later phase
+
+**Issues accepted as-is:**
+- **[#5] Backup shell injection surface** — Theoretical; requires attacker control of `.env` file (host already compromised)
+- **[#7] Unpinned restic version** — Previously deliberated in v2.0; distro-provided version acceptable
+
+**Issues deferred to Phase 2:**
+- **[#8] Shared MinIO root credentials** — Create scoped service accounts with least-privilege policies via init container
 
 ### v3.0 (2026-02-26) — Post critical review #2
 
