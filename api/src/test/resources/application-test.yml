@@ -1,18 +1,34 @@
+# api/src/test/resources/application-test.yml
+app:
+  jwt-secret: "test-secret-key-minimum-256-bits-for-hs256-signing"
+  jwt-expiry-minutes: 15
+  refresh-token-expiry-days: 1  # short TTL for expiry tests
+  rate-limit:
+    upload: 3       # low limits for fast test execution
+    general: 5
+
 spring:
   datasource:
-    url: jdbc:tc:postgresql:16:///jpt?TC_DAEMON=true
-    username: test
-    password: test
+    url: jdbc:tc:postgresql:16:///testdb
+  auth-datasource:                          # [v4 CR3-C3]
+    url: jdbc:tc:postgresql:16:///testdb
+    username: jpt_auth
+    password: test_auth_password
   flyway:
-    enabled: true
-    url: jdbc:tc:postgresql:16:///jpt?TC_DAEMON=true
-    user: test
-    password: test
     placeholders:
-      jpt_app_password: unused
-      worker_db_user_password: unused
-  autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      jpt_app_password: test_app_password
+      worker_db_user_password: test_worker_password
+      jpt_auth_password: test_auth_password  # [v4 CR3-C3]
+  data:
+    redis:
+      host: localhost  # Testcontainers manages this
 
-app:
-  jwt-secret: test-secret-not-for-production-must-be-at-least-256-bits-long-ok
+# [v4 SA-10] Restrict actuator exposure
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

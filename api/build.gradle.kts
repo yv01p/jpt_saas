@@ -27,7 +27,20 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
     implementation(libs.minio)
 
+    // Security & OAuth2
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+
+    // JWT
+    implementation(libs.jjwt.api)
+    runtimeOnly(libs.jjwt.impl)
+    runtimeOnly(libs.jjwt.jackson)
+
+    // Rate limiting (Lettuce — Spring Boot default Redis client)
+    implementation("com.bucket4j:bucket4j_jdk17-lettuce:8.14.0")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation("org.testcontainers:postgresql")
