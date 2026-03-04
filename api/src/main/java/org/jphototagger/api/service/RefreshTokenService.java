@@ -11,6 +11,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Set;
@@ -23,6 +24,7 @@ public class RefreshTokenService {
     private static final String REFRESH_PREFIX = "refresh:";
     private static final String USER_REFRESH_PREFIX = "user_refresh:";
     private static final String FAMILY_PREFIX = "refresh_family:";
+    private static final String TOKEN_FAMILY_PREFIX = "token_family:";
 
     private final StringRedisTemplate redis;
     private final Duration tokenTtl;
@@ -61,10 +63,9 @@ public class RefreshTokenService {
             throw new InvalidRefreshTokenException("Invalid refresh token");
         }
 
-        // Parse stored data: userId|familyId
-        String[] parts = data.split("\\|");
-        UUID userId = UUID.fromString(parts[0]);
-        String familyId = parts[1];
+        // Parse stored JSON: {"userId":"...","issuedAt":"...","family":"..."}
+        UUID userId = UUID.fromString(parseJsonField(data, "userId"));
+        String familyId = parseJsonField(data, "family");
 
         // Delete old token
         redis.delete(key);
@@ -83,8 +84,7 @@ public class RefreshTokenService {
         String key = REFRESH_PREFIX + hash;
         String data = redis.opsForValue().get(key);
         if (data != null) {
-            String[] parts = data.split("\\|");
-            UUID userId = UUID.fromString(parts[0]);
+            UUID userId = UUID.fromString(parseJsonField(data, "userId"));
             redis.delete(key);
             redis.opsForSet().remove(USER_REFRESH_PREFIX + userId, hash);
         }
@@ -113,7 +113,7 @@ public class RefreshTokenService {
         if (data == null) {
             return null;
         }
-        return UUID.fromString(data.split("\\|")[0]);
+        return UUID.fromString(parseJsonField(data, "userId"));
     }
 
     private String createTokenInFamily(UUID userId, String familyId) {
@@ -122,11 +122,14 @@ public class RefreshTokenService {
         String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
 
         String hash = sha256(rawToken);
-        String value = userId + "|" + familyId;
+        String issuedAt = Instant.now().toString();
+        String value = "{\"userId\":\"" + userId + "\",\"issuedAt\":\"" + issuedAt + "\",\"family\":\"" + familyId + "\"}";
 
         redis.opsForValue().set(REFRESH_PREFIX + hash, value, tokenTtl);
         redis.opsForSet().add(USER_REFRESH_PREFIX + userId, hash);
         redis.opsForSet().add(FAMILY_PREFIX + familyId, hash);
+        // Reverse index: token hash → familyId (for O(1) replay detection)
+        redis.opsForValue().set(TOKEN_FAMILY_PREFIX + hash, familyId, tokenTtl);
         // Set TTL on family set too (cleanup)
         redis.expire(FAMILY_PREFIX + familyId, tokenTtl.plusDays(1));
         redis.expire(USER_REFRESH_PREFIX + userId, tokenTtl.plusDays(1));
@@ -135,20 +138,12 @@ public class RefreshTokenService {
     }
 
     private void detectReplay(String hash) {
-        // Scan family sets to find if this hash was ever issued
-        // We check all family sets that contain this hash
-        Set<String> familyKeys = redis.keys(FAMILY_PREFIX + "*");
-        if (familyKeys == null) return;
-
-        for (String familyKey : familyKeys) {
-            Boolean isMember = redis.opsForSet().isMember(familyKey, hash);
-            if (Boolean.TRUE.equals(isMember)) {
-                log.warn("SECURITY: Refresh token replay detected in family {}", familyKey);
-                // Revoke entire family
-                String familyId = familyKey.substring(FAMILY_PREFIX.length());
-                revokeFamily(familyId);
-                throw new InvalidRefreshTokenException("Refresh token replay detected");
-            }
+        // O(1) lookup via reverse index: token hash → familyId
+        String familyId = redis.opsForValue().get(TOKEN_FAMILY_PREFIX + hash);
+        if (familyId != null) {
+            log.warn("SECURITY: Refresh token replay detected in family {}", familyId);
+            revokeFamily(familyId);
+            throw new InvalidRefreshTokenException("Refresh token replay detected");
         }
     }
 
@@ -160,13 +155,27 @@ public class RefreshTokenService {
                 String key = REFRESH_PREFIX + hash;
                 String data = redis.opsForValue().get(key);
                 if (data != null) {
-                    UUID userId = UUID.fromString(data.split("\\|")[0]);
+                    UUID userId = UUID.fromString(parseJsonField(data, "userId"));
                     redis.delete(key);
                     redis.opsForSet().remove(USER_REFRESH_PREFIX + userId, hash);
                 }
             }
         }
         // Don't delete the family set — keep it for future replay detection
+    }
+
+    /**
+     * Simple JSON field extractor for flat JSON objects with string values.
+     */
+    static String parseJsonField(String json, String field) {
+        String key = "\"" + field + "\":\"";
+        int start = json.indexOf(key);
+        if (start < 0) {
+            throw new IllegalArgumentException("Field '" + field + "' not found in JSON: " + json);
+        }
+        start += key.length();
+        int end = json.indexOf('"', start);
+        return json.substring(start, end);
     }
 
     public static String sha256(String input) {
