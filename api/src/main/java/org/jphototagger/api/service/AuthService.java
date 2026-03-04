@@ -6,14 +6,10 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
 
@@ -41,6 +37,11 @@ public class AuthService {
      * Register a new user. Returns the user ID.
      */
     public UUID register(String email, String password) {
+        var existing = authJdbc.queryForList("SELECT id FROM users WHERE email = ?", email);
+        if (!existing.isEmpty()) {
+            throw new IllegalArgumentException("Email already registered");
+        }
+
         String hash = passwordEncoder.encode(password);
         UUID userId = UUID.randomUUID();
 
@@ -54,7 +55,7 @@ public class AuthService {
         byte[] tokenBytes = new byte[32];
         secureRandom.nextBytes(tokenBytes);
         String plainToken = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
-        String tokenHash = sha256Hex(plainToken);
+        String tokenHash = RefreshTokenService.sha256(plainToken);
 
         authJdbc.update(
                 "INSERT INTO email_tokens (id, user_id, token_hash, purpose, expires_at, created_at) " +
@@ -155,13 +156,4 @@ public class AuthService {
         return (String) rows.get(0).get("email");
     }
 
-    private static String sha256Hex(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 not available", e);
-        }
-    }
 }

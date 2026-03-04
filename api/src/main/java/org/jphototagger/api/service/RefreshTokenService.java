@@ -1,5 +1,7 @@
 package org.jphototagger.api.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -27,13 +30,16 @@ public class RefreshTokenService {
     private static final String TOKEN_FAMILY_PREFIX = "token_family:";
 
     private final StringRedisTemplate redis;
+    private final ObjectMapper objectMapper;
     private final Duration tokenTtl;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public RefreshTokenService(
             StringRedisTemplate redis,
+            ObjectMapper objectMapper,
             @Value("${app.refresh-token-expiry-days:30}") int expiryDays) {
         this.redis = redis;
+        this.objectMapper = objectMapper;
         this.tokenTtl = Duration.ofDays(expiryDays);
     }
 
@@ -63,9 +69,9 @@ public class RefreshTokenService {
             throw new InvalidRefreshTokenException("Invalid refresh token");
         }
 
-        // Parse stored JSON: {"userId":"...","issuedAt":"...","family":"..."}
-        UUID userId = UUID.fromString(parseJsonField(data, "userId"));
-        String familyId = parseJsonField(data, "family");
+        Map<String, String> tokenData = deserializeTokenData(data);
+        UUID userId = UUID.fromString(tokenData.get("userId"));
+        String familyId = tokenData.get("family");
 
         // Delete old token
         redis.delete(key);
@@ -84,7 +90,7 @@ public class RefreshTokenService {
         String key = REFRESH_PREFIX + hash;
         String data = redis.opsForValue().get(key);
         if (data != null) {
-            UUID userId = UUID.fromString(parseJsonField(data, "userId"));
+            UUID userId = UUID.fromString(deserializeTokenData(data).get("userId"));
             redis.delete(key);
             redis.opsForSet().remove(USER_REFRESH_PREFIX + userId, hash);
         }
@@ -99,7 +105,10 @@ public class RefreshTokenService {
         if (hashes != null) {
             for (String hash : hashes) {
                 redis.delete(REFRESH_PREFIX + hash);
+                redis.delete(TOKEN_FAMILY_PREFIX + hash);
             }
+            // Note: family sets (refresh_family:{familyId}) are cleaned up via TTL expiry,
+            // since we don't efficiently track which families a user's tokens belong to.
         }
         redis.delete(userSetKey);
     }
@@ -113,7 +122,7 @@ public class RefreshTokenService {
         if (data == null) {
             return null;
         }
-        return UUID.fromString(parseJsonField(data, "userId"));
+        return UUID.fromString(deserializeTokenData(data).get("userId"));
     }
 
     private String createTokenInFamily(UUID userId, String familyId) {
@@ -123,7 +132,7 @@ public class RefreshTokenService {
 
         String hash = sha256(rawToken);
         String issuedAt = Instant.now().toString();
-        String value = "{\"userId\":\"" + userId + "\",\"issuedAt\":\"" + issuedAt + "\",\"family\":\"" + familyId + "\"}";
+        String value = serializeTokenData(userId, issuedAt, familyId);
 
         redis.opsForValue().set(REFRESH_PREFIX + hash, value, tokenTtl);
         redis.opsForSet().add(USER_REFRESH_PREFIX + userId, hash);
@@ -155,8 +164,9 @@ public class RefreshTokenService {
                 String key = REFRESH_PREFIX + hash;
                 String data = redis.opsForValue().get(key);
                 if (data != null) {
-                    UUID userId = UUID.fromString(parseJsonField(data, "userId"));
+                    UUID userId = UUID.fromString(deserializeTokenData(data).get("userId"));
                     redis.delete(key);
+                    redis.delete(TOKEN_FAMILY_PREFIX + hash);
                     redis.opsForSet().remove(USER_REFRESH_PREFIX + userId, hash);
                 }
             }
@@ -164,18 +174,24 @@ public class RefreshTokenService {
         // Don't delete the family set — keep it for future replay detection
     }
 
-    /**
-     * Simple JSON field extractor for flat JSON objects with string values.
-     */
-    static String parseJsonField(String json, String field) {
-        String key = "\"" + field + "\":\"";
-        int start = json.indexOf(key);
-        if (start < 0) {
-            throw new IllegalArgumentException("Field '" + field + "' not found in JSON: " + json);
+    private String serializeTokenData(UUID userId, String issuedAt, String familyId) {
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                    "userId", userId.toString(),
+                    "issuedAt", issuedAt,
+                    "family", familyId));
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize token data", e);
         }
-        start += key.length();
-        int end = json.indexOf('"', start);
-        return json.substring(start, end);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> deserializeTokenData(String json) {
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to deserialize token data", e);
+        }
     }
 
     public static String sha256(String input) {

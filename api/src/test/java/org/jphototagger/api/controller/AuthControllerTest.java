@@ -93,6 +93,19 @@ class AuthControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void registerDuplicateEmailReturns409() throws Exception {
+        String email = uniqueEmail();
+        register(email, "securePassword12");
+
+        mockMvc.perform(post("/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new RegisterRequest(email, "securePassword12"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("Email already registered"));
+    }
+
     // --- Login ---
 
     @Test

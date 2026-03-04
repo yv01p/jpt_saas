@@ -117,7 +117,7 @@ public class AuthController {
         ResponseCookie clearJwt = ResponseCookie.from("jwt", "")
                 .httpOnly(true).secure(true).sameSite("Lax").path("/").maxAge(0).build();
         ResponseCookie clearRefresh = ResponseCookie.from("refresh", "")
-                .httpOnly(true).secure(true).sameSite("Lax").path("/auth/refresh").maxAge(0).build();
+                .httpOnly(true).secure(true).sameSite("Lax").path("/auth").maxAge(0).build();
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, clearJwt.toString())
@@ -134,7 +134,7 @@ public class AuthController {
     private ResponseCookie buildRefreshCookie(String refreshToken) {
         return ResponseCookie.from("refresh", refreshToken)
                 .httpOnly(true).secure(true).sameSite("Lax")
-                .path("/auth/refresh").maxAge(Duration.ofDays(refreshExpiryDays)).build();
+                .path("/auth").maxAge(Duration.ofDays(refreshExpiryDays)).build();
     }
 
     private String extractCookie(HttpServletRequest request, String name) {
