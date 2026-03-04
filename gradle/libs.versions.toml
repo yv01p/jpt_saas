@@ -7,7 +7,7 @@ hsqldb = "2.7.2"
 minio = "8.5.9"
 tika = "2.9.2"
 jjwt = "0.12.6"
-bucket4j = "8.10.1"
+bucket4j = "8.14.0"
 netbeans-lookup = "RELEASE220"
 jakarta-xml-bind = "4.0.2"
 jaxb-runtime = "4.0.5"
@@ -24,6 +24,7 @@ jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
 jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
 bucket4j-redis = { module = "com.bucket4j:bucket4j-redis", version.ref = "bucket4j" }
+bucket4j-lettuce = { module = "com.bucket4j:bucket4j_jdk17-lettuce", version.ref = "bucket4j" }
 netbeans-lookup = { module = "org.netbeans.api:org-openide-util-lookup", version.ref = "netbeans-lookup" }
 jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", version.ref = "jakarta-xml-bind" }
 jaxb-runtime = { module = "org.glassfish.jaxb:jaxb-runtime", version.ref = "jaxb-runtime" }

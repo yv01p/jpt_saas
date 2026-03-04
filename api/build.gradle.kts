@@ -37,7 +37,7 @@ dependencies {
     runtimeOnly(libs.jjwt.jackson)
 
     // Rate limiting (Lettuce — Spring Boot default Redis client)
-    implementation("com.bucket4j:bucket4j_jdk17-lettuce:8.14.0")
+    implementation(libs.bucket4j.lettuce)
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
