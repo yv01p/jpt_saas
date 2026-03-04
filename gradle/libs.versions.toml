@@ -23,7 +23,6 @@ tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
 jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
-bucket4j-redis = { module = "com.bucket4j:bucket4j-redis", version.ref = "bucket4j" }
 bucket4j-lettuce = { module = "com.bucket4j:bucket4j_jdk17-lettuce", version.ref = "bucket4j" }
 netbeans-lookup = { module = "org.netbeans.api:org-openide-util-lookup", version.ref = "netbeans-lookup" }
 jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", version.ref = "jakarta-xml-bind" }
