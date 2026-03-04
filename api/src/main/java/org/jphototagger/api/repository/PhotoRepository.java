@@ -36,4 +36,34 @@ public interface PhotoRepository extends JpaRepository<Photo, UUID> {
                              Pageable pageable);
 
     Optional<Photo> findByUserIdAndContentHash(UUID userId, String contentHash);
+
+    /**
+     * EXIF field search using JSONB @> operator.
+     * [v4 SA-5] ORDER BY is hardcoded in the SQL.
+     */
+    @Query(value = "SELECT p.* FROM photos p JOIN photo_metadata pm ON pm.photo_id = p.id "
+            + "WHERE pm.user_id = :userId AND p.deleted_at IS NULL "
+            + "AND pm.exif_data @> cast(:jsonFilter as jsonb) "
+            + "ORDER BY p.uploaded_at DESC",
+            countQuery = "SELECT count(*) FROM photos p JOIN photo_metadata pm ON pm.photo_id = p.id "
+                    + "WHERE pm.user_id = :userId AND p.deleted_at IS NULL "
+                    + "AND pm.exif_data @> cast(:jsonFilter as jsonb)",
+            nativeQuery = true)
+    Page<Photo> searchByExif(@Param("userId") UUID userId,
+                             @Param("jsonFilter") String jsonFilter,
+                             Pageable pageable);
+
+    /**
+     * Keyword search joining through photo_keywords.
+     * [v4 SA-5] ORDER BY is hardcoded in the SQL.
+     */
+    @Query(value = "SELECT p.* FROM photos p JOIN photo_keywords pk ON pk.photo_id = p.id "
+            + "WHERE pk.user_id = :userId AND pk.keyword_id = :keywordId AND p.deleted_at IS NULL "
+            + "ORDER BY p.uploaded_at DESC",
+            countQuery = "SELECT count(*) FROM photos p JOIN photo_keywords pk ON pk.photo_id = p.id "
+                    + "WHERE pk.user_id = :userId AND pk.keyword_id = :keywordId AND p.deleted_at IS NULL",
+            nativeQuery = true)
+    Page<Photo> searchByKeyword(@Param("userId") UUID userId,
+                                @Param("keywordId") UUID keywordId,
+                                Pageable pageable);
 }
