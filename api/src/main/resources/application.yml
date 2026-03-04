@@ -24,6 +24,11 @@ spring:
     placeholders:
       jpt_app_password: ${DB_PASS}
       worker_db_user_password: ${WORKER_DB_PASS}
+      jpt_auth_password: ${JPT_AUTH_PASSWORD}
+  auth-datasource:
+    url: ${SPRING_DATASOURCE_URL:${DB_URL:jdbc:postgresql://localhost:5432/jpt}}
+    username: jpt_auth
+    password: ${JPT_AUTH_PASSWORD}
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
@@ -35,6 +40,15 @@ app:
   default-quota-bytes: 10737418240  # 10 GB
   default-share-days: 30
   trash-retention-days: 30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
 
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}

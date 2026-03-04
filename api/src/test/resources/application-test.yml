@@ -9,12 +9,19 @@ app:
 
 spring:
   datasource:
-    url: jdbc:tc:postgresql:16:///testdb
-  auth-datasource:                          # [v4 CR3-C3]
-    url: jdbc:tc:postgresql:16:///testdb
-    username: jpt_auth
-    password: test_auth_password
+    url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
+    username: test
+    password: test
+    hikari:
+      connection-init-sql: "SELECT 1"
+  auth-datasource:
+    url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
+    username: test
+    password: test
   flyway:
+    url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
+    user: test
+    password: test
     placeholders:
       jpt_app_password: test_app_password
       worker_db_user_password: test_worker_password

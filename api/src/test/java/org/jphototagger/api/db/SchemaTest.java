@@ -31,6 +31,9 @@ class SchemaTest {
         registry.add("spring.flyway.url", pg::getJdbcUrl);
         registry.add("spring.flyway.user", pg::getUsername);
         registry.add("spring.flyway.password", pg::getPassword);
+        registry.add("spring.auth-datasource.url", pg::getJdbcUrl);
+        registry.add("spring.auth-datasource.username", pg::getUsername);
+        registry.add("spring.auth-datasource.password", pg::getPassword);
     }
 
     @Autowired

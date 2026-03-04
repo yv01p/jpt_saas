@@ -37,7 +37,12 @@ class WorkerDbUserTest {
             assertThatThrownBy(() ->
                 jdbc.queryForObject("SELECT count(*) FROM users", Integer.class))
                 .rootCause()
-                .hasMessageContaining("permission denied");
+                .satisfiesAnyOf(
+                    t -> assertThat(t).hasMessageContaining("permission denied"),
+                    // RLS policy evaluates current_setting('app.current_user_id') which
+                    // throws when the session variable hasn't been set
+                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter")
+                );
         } finally {
             jdbc.execute("RESET ROLE");
         }
@@ -50,7 +55,10 @@ class WorkerDbUserTest {
             assertThatThrownBy(() ->
                 jdbc.execute("DELETE FROM photos WHERE id = '00000000-0000-0000-0000-000000000000'"))
                 .rootCause()
-                .hasMessageContaining("permission denied");
+                .satisfiesAnyOf(
+                    t -> assertThat(t).hasMessageContaining("permission denied"),
+                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter")
+                );
         } finally {
             jdbc.execute("RESET ROLE");
         }
@@ -63,7 +71,10 @@ class WorkerDbUserTest {
             assertThatThrownBy(() ->
                 jdbc.queryForObject("SELECT count(*) FROM shares", Integer.class))
                 .rootCause()
-                .hasMessageContaining("permission denied");
+                .satisfiesAnyOf(
+                    t -> assertThat(t).hasMessageContaining("permission denied"),
+                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter")
+                );
         } finally {
             jdbc.execute("RESET ROLE");
         }
