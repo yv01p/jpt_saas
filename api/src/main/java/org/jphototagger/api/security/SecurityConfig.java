@@ -46,7 +46,7 @@ public class SecurityConfig implements WebMvcConfigurer {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
-                .ignoringRequestMatchers("/auth/login", "/auth/register"))
+                .ignoringRequestMatchers("/auth/login", "/auth/register", "/auth/refresh", "/auth/logout"))
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setContentType("application/json");
@@ -77,7 +77,7 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(12);
     }
 
     @Override

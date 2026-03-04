@@ -75,10 +75,10 @@ class SecurityTest {
 
     @Test
     void publicPathAuthIsAccessible() throws Exception {
-        // /auth/** is public — returns 404 because no AuthController exists yet,
-        // but NOT 401 (security allows it through).
+        // /auth/** is public — GET /auth/login returns 405 (Method Not Allowed)
+        // because AuthController only maps POST, but NOT 401 (security allows it through).
         mockMvc.perform(get("/auth/login"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isMethodNotAllowed());
     }
 
     @Test
