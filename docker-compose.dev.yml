@@ -1,0 +1,31 @@
+# docker-compose.dev.yml — local development overrides
+services:
+  api:
+    ports: ["127.0.0.1:8080:8080"]
+
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]
+    environment:
+      POSTGRES_DB: jpt
+      POSTGRES_USER: jpt
+      POSTGRES_PASSWORD: jpt
+
+  minio:
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    environment:
+      MINIO_BROWSER: "on"
+    command: server /data --console-address ":9001"
+
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
+
+  # Don't run these in dev
+  nginx:
+    profiles: ["production"]
+  backup:
+    profiles: ["production"]
+  pgbackup:
+    profiles: ["production"]
+  certbot:
+    profiles: ["production"]
+  # Prometheus and Grafana — deferred to monitoring phase

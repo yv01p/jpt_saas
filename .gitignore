@@ -121,3 +121,6 @@
 .gradle/
 build/
 thoughts/
+secrets/
+react-build/
+.env
