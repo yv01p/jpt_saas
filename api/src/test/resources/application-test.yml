@@ -26,6 +26,18 @@ spring:
       jpt_app_password: test_app_password
       worker_db_user_password: test_worker_password
       jpt_auth_password: test_auth_password  # [v4 CR3-C3]
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: test-google-client-id
+            client-secret: test-google-client-secret
+            scope: openid, email, profile
+          github:
+            client-id: test-github-client-id
+            client-secret: test-github-client-secret
+            scope: read:user, user:email
   data:
     redis:
       host: localhost  # Testcontainers manages this
