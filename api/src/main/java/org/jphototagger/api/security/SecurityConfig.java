@@ -30,13 +30,16 @@ import java.io.IOException;
 public class SecurityConfig implements WebMvcConfigurer {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final RlsInterceptor rlsInterceptor;
     private final OAuth2SuccessHandler oAuth2SuccessHandler;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
+                          RateLimitFilter rateLimitFilter,
                           RlsInterceptor rlsInterceptor,
                           OAuth2SuccessHandler oAuth2SuccessHandler) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.rlsInterceptor = rlsInterceptor;
         this.oAuth2SuccessHandler = oAuth2SuccessHandler;
     }
@@ -65,7 +68,8 @@ public class SecurityConfig implements WebMvcConfigurer {
             .oauth2Login(oauth2 -> oauth2
                 .successHandler(oAuth2SuccessHandler))
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterAfter(new CsrfCookieFilter(), jwtAuthenticationFilter.getClass());
+            .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class)
+            .addFilterAfter(new CsrfCookieFilter(), RateLimitFilter.class);
 
         return http.build();
     }

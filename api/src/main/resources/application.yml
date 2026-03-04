@@ -39,6 +39,9 @@ app:
   jwt-expiry-minutes: 15
   default-quota-bytes: 10737418240  # 10 GB
   refresh-token-expiry-days: 30
+  rate-limit:
+    upload: 100       # uploads per hour per user
+    general: 1000     # general requests per hour per user
   default-share-days: 30
   trash-retention-days: 30
 
