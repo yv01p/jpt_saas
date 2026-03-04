@@ -28,18 +28,21 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
     private final RefreshTokenService refreshTokenService;
     private final long jwtExpiryMinutes;
     private final int refreshExpiryDays;
+    private final String redirectUri;
 
     public OAuth2SuccessHandler(
             @Qualifier("authJdbcTemplate") JdbcTemplate authJdbc,
             JwtService jwtService,
             RefreshTokenService refreshTokenService,
             @Value("${app.jwt-expiry-minutes}") long jwtExpiryMinutes,
-            @Value("${app.refresh-token-expiry-days:30}") int refreshExpiryDays) {
+            @Value("${app.refresh-token-expiry-days:30}") int refreshExpiryDays,
+            @Value("${app.oauth2.redirect-uri:/}") String redirectUri) {
         this.authJdbc = authJdbc;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.jwtExpiryMinutes = jwtExpiryMinutes;
         this.refreshExpiryDays = refreshExpiryDays;
+        this.redirectUri = redirectUri;
     }
 
     @Override
@@ -54,9 +57,7 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
 
         // Handle missing email
         if (email == null || email.isBlank()) {
-            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"OAuth provider did not return an email address\"}");
+            response.sendRedirect(redirectUri + "login?error=no_email");
             return;
         }
 
@@ -83,21 +84,14 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
 
         // If user has a password (non-OAuth account), block login — no auto-merge
         if (existingPasswordHash != null && !existingPasswordHash.isBlank()) {
-            response.setStatus(HttpServletResponse.SC_CONFLICT);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"error\":\"This email is already registered with a password. " +
-                    "Please log in with your password.\"}");
+            response.sendRedirect(redirectUri + "login?error=email_conflict");
             return;
         }
 
         // Verify provider and id match
         String existingOAuthId = (String) user.get("oauth_id");
         if (!provider.equals(existingOAuthProvider) || !oauthId.equals(existingOAuthId)) {
-            response.setStatus(HttpServletResponse.SC_CONFLICT);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"error\":\"This email is registered with a different OAuth provider.\"}");
+            response.sendRedirect(redirectUri + "login?error=provider_mismatch");
             return;
         }
 
@@ -106,7 +100,7 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         issueTokens(response, userId, email);
     }
 
-    private void issueTokens(HttpServletResponse response, UUID userId, String email) {
+    private void issueTokens(HttpServletResponse response, UUID userId, String email) throws IOException {
         String jwt = jwtService.generateToken(userId, email);
         String refreshToken = refreshTokenService.createToken(userId);
 
@@ -120,6 +114,6 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
 
         response.addHeader(HttpHeaders.SET_COOKIE, jwtCookie.toString());
         response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
-        response.setStatus(HttpServletResponse.SC_OK);
+        response.sendRedirect(redirectUri);
     }
 }

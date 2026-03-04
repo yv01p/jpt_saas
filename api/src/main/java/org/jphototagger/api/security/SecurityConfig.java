@@ -44,6 +44,8 @@ public class SecurityConfig implements WebMvcConfigurer {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            // IF_REQUIRED (not STATELESS): OAuth2 authorization code flow needs session
+            // for the redirect dance. JWT filter still handles API auth without sessions.
             .sessionManagement(session -> session
                 .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
             .csrf(csrf -> csrf

@@ -1,6 +1,5 @@
 package org.jphototagger.api.security;
 
-import jakarta.servlet.http.HttpServletResponse;
 import org.jphototagger.api.config.TestRedisConfig;
 import org.jphototagger.api.service.RefreshTokenService;
 import org.junit.jupiter.api.BeforeEach;
@@ -88,11 +87,12 @@ class OAuth2SuccessHandlerTest {
         assertThat(users.get(0).get("oauth_id")).isEqualTo("google-123");
         assertThat(users.get(0).get("password_hash")).isNull();
 
-        // Assert: JWT cookie is issued
+        // Assert: JWT cookie is issued and redirects to frontend
         assertCookiePresent(response, "jwt");
         assertCookiePresent(response, "refresh");
         assertCookieSecure(response, "jwt");
         assertCookieSecure(response, "refresh");
+        assertThat(response.getRedirectedUrl()).isEqualTo("/");
     }
 
     @Test
@@ -112,10 +112,8 @@ class OAuth2SuccessHandlerTest {
 
         handler.onAuthenticationSuccess(request, response, auth);
 
-        // Assert: login is blocked
-        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_CONFLICT);
-        String body = response.getContentAsString();
-        assertThat(body).contains("already registered with a password");
+        // Assert: redirects to login with email_conflict error
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=email_conflict");
 
         // Assert: no JWT cookie issued
         assertNoCookie(response, "jwt");
@@ -138,9 +136,10 @@ class OAuth2SuccessHandlerTest {
 
         handler.onAuthenticationSuccess(request, response, auth);
 
-        // Assert: JWT cookie is issued, no new user created
+        // Assert: JWT cookie is issued, redirects, no new user created
         assertCookiePresent(response, "jwt");
         assertCookiePresent(response, "refresh");
+        assertThat(response.getRedirectedUrl()).isEqualTo("/");
 
         List<Map<String, Object>> users = authJdbc.queryForList(
                 "SELECT * FROM users WHERE email = ?", "oauthuser@example.com");
@@ -165,10 +164,8 @@ class OAuth2SuccessHandlerTest {
 
         handler.onAuthenticationSuccess(request, response, auth);
 
-        // Assert: login is blocked
-        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_CONFLICT);
-        String body = response.getContentAsString();
-        assertThat(body).contains("different OAuth provider");
+        // Assert: redirects to login with provider_mismatch error
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=provider_mismatch");
 
         // Assert: no JWT cookie issued
         assertNoCookie(response, "jwt");
@@ -184,10 +181,8 @@ class OAuth2SuccessHandlerTest {
 
         handler.onAuthenticationSuccess(request, response, auth);
 
-        // Assert: appropriate error response
-        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_BAD_REQUEST);
-        String body = response.getContentAsString();
-        assertThat(body).contains("email");
+        // Assert: redirects to login with no_email error
+        assertThat(response.getRedirectedUrl()).isEqualTo("/login?error=no_email");
 
         // Assert: no JWT cookie issued
         assertNoCookie(response, "jwt");
