@@ -16,7 +16,10 @@
 
 ### Task 5.1: Share Token Service
 
+**Prerequisite:** Add `/share/**` to the public (unauthenticated) paths in `SecurityConfig.java`. This was intentionally removed in Phase 2 (v3.0, M3) to avoid exposing a 404 endpoint before the controller exists. It must be re-added here.
+
 **Files:**
+- Modify: `api/src/main/java/org/jphototagger/api/security/SecurityConfig.java` — add `/share/**` to public paths
 - Create: `api/src/main/java/org/jphototagger/api/service/ShareService.java`
 - Create: `api/src/main/java/org/jphototagger/api/controller/ShareController.java`
 

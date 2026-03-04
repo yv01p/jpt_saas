@@ -12,13 +12,55 @@
 
 **All phases:** See `docs/plans/2026-02-25-saas-conversion-index.md` for the full phase list.
 
-**Version:** 2.0
+**Version:** 4.0
 **Date:** 2026-03-04
 **Status:** Approved
 
 ---
 
 ## Changelog
+
+### v4.0 — 2026-03-04
+
+Revisions following Critical Implementation Review v3 (`docs/plans/2026-02-25-saas-conversion-phase-2-critical-review-3.md`) and Security Audit v1 (`docs/plans/2026-03-04-saas-conversion-phase-2-security-audit-1.md`):
+
+- **[CR3-C1 / SA-1] `SET LOCAL` does not support parameterized queries:** `RlsAspect` used `SET LOCAL ... = :id` which PostgreSQL rejects (`ERROR: syntax error at or near "$1"`). Fix: replaced with `set_config('app.current_user_id', :id, true)` — a regular SQL function that accepts bind parameters and is functionally identical to `SET LOCAL` (transaction-scoped). Updated Task 2.4.
+- **[CR3-C2 / SA-2] `RlsAspect` `@Order` undefined — cross-tenant data leak:** Both `RlsAspect` and `TransactionInterceptor` defaulted to `Ordered.LOWEST_PRECEDENCE`. If `RlsAspect` fired before the transaction opened, `set_config(..., true)` executed outside a transaction (session-scoped), leaking user context to the connection pool. Fix: added `@EnableTransactionManagement(order = 0)` and `@Order(1)` on `RlsAspect`. Added cross-request tenant isolation integration test. Updated Task 2.4.
+- **[CR3-C3 / SA-3] V4 Flyway migration literal password:** `CREATE ROLE jpt_auth ... PASSWORD 'SET_VIA_SECRETS'` was a literal string, not a Flyway placeholder. Fix: replaced with `'${jpt_auth_password}'` and added `spring.flyway.placeholders.jpt_auth_password` config. Updated Tasks 2.0 and 2.4.
+- **[CR3-C4] Missing Testcontainers Redis module:** Refresh token and rate limiting tests require Redis but no Testcontainers Redis dependency existed. Fix: added `org.testcontainers:redis` dependency and shared `TestRedisConfig` with `@ServiceConnection`. Updated Task 2.0.
+- **[SA-4] `jpt_auth` role grants overly broad:** `GRANT UPDATE ON users` allowed modifying any column (quota, role). Fix: replaced with column-level `GRANT UPDATE` restricted to auth-relevant columns only. Added missing `DELETE ON email_tokens`. Added `ALTER DEFAULT PRIVILEGES` for sequences. Updated Task 2.4.
+- **[SA-7] No login counter reset on successful login:** Failed login counter was never reset, creating a persistent near-lockout state. Fix: on successful authentication, reset `failed_login_attempts = 0` and `locked_until = NULL`. Updated Task 2.5.
+- **[SA-8] Refresh token family tracking unused:** The `family` field was stored in Redis but never checked during rotation. Fix: implemented family-based replay detection — if a consumed token's family is replayed, all tokens in that family are revoked and a security event is logged. Updated Task 2.5.
+- **[SA-9] `RlsContext` ThreadLocal not cleared in error paths:** If a Servlet container error bypassed `afterCompletion()`, the ThreadLocal leaked to the next request on the same thread. Fix: added `RlsContextCleanupFilter` (Servlet Filter, `@Order(HIGHEST_PRECEDENCE)`) that clears `RlsContext` in a `finally` block. Updated Task 2.4.
+- **[SA-6] JWT secret — no startup validation:** Dev profile fallback secret could be active in production if `SPRING_PROFILES_ACTIVE` was unset. Fix: added `@PostConstruct` validation in `JwtService` that fails fast if secret is too short or contains default marker in non-dev/test profiles. Updated Task 2.3.
+- **[CR3-M2] `EntityManager` may not be transaction-bound in `RlsAspect`:** `em.createNativeQuery()` could obtain a different connection than subsequent Hibernate queries. Fix: replaced with `em.unwrap(Session.class).doWork(connection -> ...)` to guarantee same JDBC connection. Updated Task 2.4.
+- **[CR3-M3] `RlsAspect` pointcut matches auth service methods unnecessarily:** Narrowed pointcut to exclude `AuthService` and `RefreshTokenService`. Updated Task 2.4.
+- **[CR3-M4] `GRANT USAGE ON ALL SEQUENCES` won't cover future migrations:** Added `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO jpt_auth`. Updated Task 2.4.
+- **[CR3-M5] Bucket4j Redis artifact may need Lettuce module:** Added verification note — Spring Boot ships Lettuce by default; confirm correct Bucket4j module (`bucket4j-lettuce` if needed). Updated Task 2.9.
+- **[CR3-M6] Missing `@Transactional` on multi-step service methods:** `PhotoService.softDelete()`, `PhotoService.restore()`, and `AlbumService.addPhoto()` must be explicitly `@Transactional`. Updated Tasks 2.7 and 2.8.
+- **[SA-5] Native query + Pageable Sort injection:** Spring Data JPA doesn't validate sort properties for native queries. Fix: controllers calling native queries use `PageRequest.of(page, size)` without Sort; `ORDER BY` is hardcoded in the native query. Updated Tasks 2.2 and 2.8.
+- **[SA-12] Missing `Secure` and `SameSite` cookie attributes:** JWT and refresh token cookies lacked `Secure`, `SameSite`, and `Path` attributes. Fix: use `ResponseCookie` builder with `secure(true)`, `sameSite("Lax")`, `path("/")`. Updated Task 2.5.
+- **[SA-10] Actuator health exposed without rate limiting or hardening:** Added explicit actuator config (`show-details: never`, `exposure.include: health` only). Added Nginx rate limiting for `/actuator/health`. Updated Tasks 2.0 and 2.4.
+- **[SA-11] No password breach database check:** Deferred to future hardening phase. 12-char minimum + bcrypt 12 + lockout provides strong baseline per NIST 800-63B.
+
+### v3.0 — 2026-03-04
+
+Revisions following Critical Implementation Review v2 (`docs/plans/2026-02-25-saas-conversion-phase-2-critical-review-2.md`):
+
+- **[C1] RLS blocks all auth operations:** Login, registration, and email verification fail because RLS on the `users` table filters by `app.current_user_id` (nil UUID for unauthenticated requests). Fix: added V4 Flyway migration creating a dedicated `jpt_auth` role with `BYPASSRLS`, a secondary `authDataSource` bean, and injection into `AuthService`, `RefreshTokenService`, and `OAuth2SuccessHandler`. Added to Task 2.4.
+- **[C2] StatementInspector prepend fails with JDBC extended query protocol:** PostgreSQL's JDBC driver uses the extended query protocol, which only allows one statement per `Parse` message. Multi-statement SQL string causes `ERROR: cannot insert multiple commands into a prepared statement`. Fix: replaced `RlsStatementInspector` with `RlsAspect` — an AOP `@Aspect` that intercepts `@Transactional` methods and executes `SET LOCAL` as a separate native query. Also calls `assert_user_context()` after `SET LOCAL` (addresses M2).
+- **[C3] Missing Gradle dependencies:** `spring-boot-starter-security`, jjwt, OAuth2, Bucket4j, `spring-security-test`, and Testcontainers Redis module were all absent. Fix: added new Task 2.0 with all dependency additions and compile verification.
+- **[C4] CSRF token unavailable to SPA post-login:** Spring Security 6's deferred CSRF resolution doesn't set `XSRF-TOKEN` cookie on CSRF-exempt endpoints (login/register). Fix: adopted `SpaCsrfTokenRequestHandler` in SecurityConfig (Task 2.4).
+- **[C5] Join table entities with composite PKs unspecified:** `album_photos` and `photo_keywords` have composite PKs + `user_id` column, cannot use `@ManyToMany`. Fix: added `AlbumPhoto`, `AlbumPhotoId`, `PhotoKeyword`, `PhotoKeywordId` entities with `@IdClass` to Task 2.1.
+- **[M1] No `application-test.yml`:** Tests use `@ActiveProfiles("test")` but no test profile config exists. Fix: added to Task 2.0.
+- **[M2] `assert_user_context()` never called:** Fix: `RlsAspect` now calls `SELECT assert_user_context()` after `SET LOCAL` (see C2).
+- **[M3] `/share/**` public path without controller:** Removed from SecurityConfig public paths. Re-added in Phase 5, Task 5.1 when `ShareController` is implemented.
+- **[M4] Soft-deleted photos block re-upload:** Partial unique index fix deferred to Phase 3, Task 3.2 (V4 Flyway migration).
+- **[M5] `email_verified` soft-gating:** Upload gating deferred to Phase 3, Task 3.2. 7-day auto-purge added to Phase 3, Task 3.6.
+- **[M6] `updated_at` columns not auto-managed:** Added `@UpdateTimestamp` annotation requirement to Task 2.1 entity notes.
+- **[M7] No error response DTO:** Added `ErrorResponse` record to Task 2.4.
+- **[M8] OAuth2 test mocking strategy unclear:** Specified `oidcLogin()` from `spring-security-test` as the mocking strategy in Task 2.6.
+- **[Q3] Phase 2 tests seed photos via `EntityManager`:** No upload endpoint until Phase 3. Tests insert data directly.
 
 ### v2.0 — 2026-03-04
 
@@ -49,6 +91,100 @@ Initial plan.
 
 ---
 
+### Task 2.0: Gradle Dependencies & Test Configuration
+
+**Files:**
+- Modify: `api/build.gradle.kts`
+- Create: `api/src/test/resources/application-test.yml`
+- Create: `api/src/test/java/org/jphototagger/api/config/TestRedisConfig.java` **[v4 CR3-C4]**
+
+**Step 1: Add all Phase 2 dependencies to `api/build.gradle.kts`**
+
+```kotlin
+// Security
+implementation("org.springframework.boot:spring-boot-starter-security")
+implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+
+// JWT
+implementation("io.jsonwebtoken:jjwt-api:0.12.6")
+runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
+runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+
+// Rate limiting — verify correct module for Lettuce (Spring Boot default) [v4 CR3-M5]
+// If bucket4j-redis is Jedis-only, use bucket4j-lettuce instead
+implementation("com.bucket4j:bucket4j-redis:8.14.0")
+
+// Test
+testImplementation("org.springframework.security:spring-security-test")
+testImplementation("org.testcontainers:redis:1.20.6")  // [v4 CR3-C4]
+```
+
+**Step 2: Create `application-test.yml`**
+
+```yaml
+# api/src/test/resources/application-test.yml
+app:
+  jwt-secret: "test-secret-key-minimum-256-bits-for-hs256-signing"
+  jwt-expiry-minutes: 15
+  refresh-token-expiry-days: 1  # short TTL for expiry tests
+  rate-limit:
+    upload: 3       # low limits for fast test execution
+    general: 5
+
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16:///testdb
+  auth-datasource:                          # [v4 CR3-C3]
+    url: jdbc:tc:postgresql:16:///testdb
+    username: jpt_auth
+    password: test_auth_password
+  flyway:
+    placeholders:
+      jpt_auth_password: test_auth_password  # [v4 CR3-C3]
+  data:
+    redis:
+      host: localhost  # Testcontainers manages this
+
+# [v4 SA-10] Restrict actuator exposure
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+```
+
+**Step 3: Create shared `TestRedisConfig` [v4 CR3-C4]**
+
+```java
+// api/src/test/java/org/jphototagger/api/config/TestRedisConfig.java
+@TestConfiguration
+public class TestRedisConfig {
+    @Bean
+    @ServiceConnection
+    public GenericContainer<?> redisContainer() {
+        return new GenericContainer<>("redis:7-alpine")
+            .withExposedPorts(6379);
+    }
+}
+```
+
+**Step 4: Verify compilation**
+
+Run: `./gradlew :api:compileJava :api:compileTestJava`
+Expected: BUILD SUCCESSFUL
+
+**Step 5: Commit**
+
+```bash
+git add api/build.gradle.kts api/src/test/resources/application-test.yml api/src/test/java/org/jphototagger/api/config/TestRedisConfig.java
+git commit -m "build: add Phase 2 dependencies — security, JWT, OAuth2, Bucket4j, Testcontainers Redis, test config"
+```
+
+---
+
 ### Task 2.1: JPA Entities
 
 **Files:**
@@ -60,6 +196,10 @@ Initial plan.
 - Create: `api/src/main/java/org/jphototagger/api/entity/Share.java`
 - Create: `api/src/main/java/org/jphototagger/api/entity/EmailToken.java`
 - Create: `api/src/main/java/org/jphototagger/api/entity/SavedSearch.java`
+- Create: `api/src/main/java/org/jphototagger/api/entity/AlbumPhoto.java` **[v3 C5]**
+- Create: `api/src/main/java/org/jphototagger/api/entity/AlbumPhotoId.java` **[v3 C5]**
+- Create: `api/src/main/java/org/jphototagger/api/entity/PhotoKeyword.java` **[v3 C5]**
+- Create: `api/src/main/java/org/jphototagger/api/entity/PhotoKeywordId.java` **[v3 C5]**
 
 **Step 1: Write failing test — User entity persists**
 
@@ -115,7 +255,18 @@ Entity-specific notes:
 - **Photo:** Do NOT map the `search_vector` column. It is a PostgreSQL generated `tsvector` column with no Hibernate type mapping. The column exists in the DB (created by Flyway) and is referenced only by native queries. **[C8]**
 - **PhotoMetadata:** Standalone entity with `@Id` on `photoId`. No `@OneToOne` relationship to `Photo` — metadata is written by the worker and queried separately via `PhotoMetadataRepository`. **[M9]**
 - **User:** Include `oauthProvider`, `oauthId`, `failedLoginAttempts`, `lockedUntil` fields (needed by Tasks 2.5, 2.6).
-- **Album / AlbumPhoto:** The composite FK constraint (`album_photos(album_id, user_id) → albums(id, user_id)`) is enforced at the Flyway/DB level only, not in JPA. `AlbumPhoto` uses a simple `@ManyToOne` to `Album` and `Photo`. **[M6]**
+- **AlbumPhoto / PhotoKeyword (join tables) [v3 C5]:** These tables have composite PKs and an extra `user_id` column (required for RLS), so they cannot use `@ManyToMany`. Define explicit `@Entity` classes with `@IdClass`:
+  ```java
+  @Entity @Table(name = "album_photos") @IdClass(AlbumPhotoId.class)
+  public class AlbumPhoto {
+      @Id private UUID albumId;
+      @Id private UUID photoId;
+      private UUID userId;  // set from authenticated user context, never from request input
+  }
+  public class AlbumPhotoId implements Serializable { UUID albumId; UUID photoId; }
+  ```
+  Same pattern for `PhotoKeyword` / `PhotoKeywordId`. The composite FK constraint (`album_photos(album_id, user_id) → albums(id, user_id)`) is enforced at the Flyway/DB level only, not in JPA. **[M6]**
+- **`updated_at` columns [v3 M6]:** All entities with `updated_at` fields (`User`, `Photo`, `Keyword`, `Album`, `Share`) must annotate the field with `@UpdateTimestamp` (Hibernate, already available via `spring-boot-starter-data-jpa`). This ensures `updated_at` is set automatically on every flush.
 
 **Step 4: Run test to verify it passes**
 
@@ -172,6 +323,8 @@ class PhotoRepositoryTest {
 
 **Step 2: Implement repositories with custom queries**
 
+**IMPORTANT [v4 SA-5]:** All native `@Query` methods that accept `Pageable` must hardcode `ORDER BY` in the SQL and receive `Pageable` without `Sort`. Controllers must construct `PageRequest.of(page, Math.min(size, 100))` — never pass user-supplied sort properties to native queries. Spring Data JPA does not validate sort properties for native queries, creating a SQL injection vector.
+
 ```java
 public interface PhotoRepository extends JpaRepository<Photo, UUID> {
 
@@ -182,7 +335,8 @@ public interface PhotoRepository extends JpaRepository<Photo, UUID> {
         UUID userId, Pageable pageable);  // [C2]
 
     @Query(value = "SELECT * FROM photos WHERE user_id = :userId AND deleted_at IS NULL " +
-           "AND search_vector @@ plainto_tsquery('english', :query)",
+           "AND search_vector @@ plainto_tsquery('english', :query) " +
+           "ORDER BY uploaded_at DESC",  // [v4 SA-5] — hardcoded ORDER BY, no Sort from Pageable
            countQuery = "SELECT count(*) FROM photos WHERE user_id = :userId AND deleted_at IS NULL " +
            "AND search_vector @@ plainto_tsquery('english', :query)",
            nativeQuery = true)  // [C1] — uses stored GIN-indexed search_vector column
@@ -225,11 +379,32 @@ void expiredTokenIsInvalid() {
     // Create token with -1 minute expiry
     // Verify validateToken returns false
 }
+
+@Test
+void startupFailsWithDefaultSecretInProdProfile() {
+    // [v4 SA-6] Verify @PostConstruct validation rejects weak/default secrets
+}
 ```
 
 **Step 2: Implement JwtService**
 
 Use `io.jsonwebtoken:jjwt`. HS256 signing with configurable secret from `app.jwt-secret`. 15-minute expiry from `app.jwt-expiry-minutes`.
+
+**[v4 SA-6] Startup validation:** Add `@PostConstruct` method that fails fast if the JWT secret is inadequate in non-dev/test profiles:
+
+```java
+@PostConstruct
+void validateSecret() {
+    if (!environment.acceptsProfiles(Profiles.of("dev", "test"))) {
+        if (jwtSecret.length() < 43) {
+            throw new IllegalStateException("JWT_SECRET must be >= 256 bits (43+ base64 chars)");
+        }
+        if (jwtSecret.contains("change-me")) {
+            throw new IllegalStateException("Default JWT_SECRET detected in non-dev profile");
+        }
+    }
+}
+```
 
 **Step 3: Run tests, verify pass**
 
@@ -237,7 +412,7 @@ Use `io.jsonwebtoken:jjwt`. HS256 signing with configurable secret from `app.jwt
 
 ```bash
 git add api/src/main/java/org/jphototagger/api/security/ api/src/test/
-git commit -m "feat: JWT service — token generation and validation"
+git commit -m "feat: JWT service — token generation, validation, and startup secret check"
 ```
 
 ### Task 2.4: Spring Security Configuration + Global Exception Handler
@@ -245,9 +420,15 @@ git commit -m "feat: JWT service — token generation and validation"
 **Files:**
 - Create: `api/src/main/java/org/jphototagger/api/security/SecurityConfig.java`
 - Create: `api/src/main/java/org/jphototagger/api/security/JwtAuthenticationFilter.java`
-- Create: `api/src/main/java/org/jphototagger/api/security/RlsInterceptor.java` (renamed from `RlsFilter`) **[C3]**
-- Create: `api/src/main/java/org/jphototagger/api/security/RlsStatementInspector.java` **[C3]**
+- Create: `api/src/main/java/org/jphototagger/api/security/RlsInterceptor.java` — stores userId in `ThreadLocal` **[C3]**
+- Create: `api/src/main/java/org/jphototagger/api/security/RlsAspect.java` — AOP-based RLS context **[v3 C2]**
+- Create: `api/src/main/java/org/jphototagger/api/security/RlsContext.java` — `ThreadLocal` holder **[v3 C2]**
+- Create: `api/src/main/java/org/jphototagger/api/security/RlsContextCleanupFilter.java` — Servlet filter for ThreadLocal cleanup **[v4 SA-9]**
+- Create: `api/src/main/java/org/jphototagger/api/config/AuthDataSourceConfig.java` — privileged auth DataSource **[v3 C1]**
 - Create: `api/src/main/java/org/jphototagger/api/controller/GlobalExceptionHandler.java` **[C6]**
+- Create: `api/src/main/java/org/jphototagger/api/dto/ErrorResponse.java` **[v3 M7]**
+- Create: `api/src/main/resources/db/migration/V4__create_jpt_auth_role.sql` **[v3 C1]**
+- Modify: Nginx config — add rate limiting for `/actuator/health` **[v4 SA-10]**
 
 **Step 1: Write failing test — unauthenticated requests rejected**
 
@@ -271,41 +452,171 @@ class SecurityTest {
         mockMvc.perform(get("/photos").cookie(new Cookie("jwt", validToken)))
             .andExpect(status().isOk());
     }
+
+    @Test
+    void rlsContextDoesNotLeakAcrossRequests() throws Exception {
+        // [v4 CR3-C2] Cross-request tenant isolation test
+        // Request 1: authenticate as userA, GET /photos → returns userA's photos
+        // Request 2: authenticate as userB, GET /photos → must return only userB's photos
+        // If set_config leaked, request 2 would see userA's photos
+    }
 }
 ```
 
 **Step 2: Implement SecurityConfig**
 
+- **`@EnableTransactionManagement(order = 0)`** on `SecurityConfig` — ensures `TransactionInterceptor` wraps first **[v4 CR3-C2]**
 - JWT filter reads `jwt` httpOnly cookie
-- CSRF enabled with `CookieCsrfTokenRepository.withHttpOnlyFalse()`
-- **CSRF exemption for pre-auth endpoints:** `.ignoringRequestMatchers("/auth/login", "/auth/register")` — these endpoints have no session to exploit **[C4]**
-- Public paths: `/auth/**`, `/share/**`, `/actuator/health`
+- CSRF enabled with `CookieCsrfTokenRepository.withHttpOnlyFalse()` and `SpaCsrfTokenRequestHandler` **[v3 C4]** — ensures CSRF token cookie is set on every response (including login), and correctly handles `X-XSRF-TOKEN` header from SPAs:
+  ```java
+  .csrf(csrf -> csrf
+      .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+      .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
+      .ignoringRequestMatchers("/auth/login", "/auth/register")
+  )
+  ```
+- Public paths: `/auth/**`, `/actuator/health` — **Note:** `/share/**` intentionally removed until Phase 5 when `ShareController` is implemented **[v3 M3]**
+
+**[v4 SA-10] Actuator hardening:** Add to `application.yml`:
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+```
 
 **Step 3: Implement JwtAuthenticationFilter**
 
 Extract JWT from cookie, validate, set SecurityContext.
 
-**Step 4: Implement RLS — HandlerInterceptor + StatementInspector [C3]**
+**Step 4: Implement RlsContextCleanupFilter [v4 SA-9]**
 
-The RLS mechanism uses two components to guarantee `SET LOCAL` runs inside the transaction:
-
-1. **`RlsInterceptor`** (Spring `HandlerInterceptor`): After authentication, extracts the authenticated user ID from `SecurityContext` and stores it in a `ThreadLocal<UUID>`.
-
-2. **`RlsStatementInspector`** (Hibernate `StatementInspector`): On the first SQL statement within each transaction, reads the user ID from the `ThreadLocal` and prepends `SET LOCAL app.current_user_id = '{userId}';` before the statement. Uses a per-thread flag to ensure `SET LOCAL` is issued only once per transaction. The flag is cleared by the `RlsInterceptor.afterCompletion()` callback.
-
-Register the `StatementInspector` in `application.yml`:
-```yaml
-spring.jpa.properties.hibernate.session_factory.statement_inspector: org.jphototagger.api.security.RlsStatementInspector
-```
-
-This guarantees the `SET LOCAL` always executes within the transaction boundary, making it transaction-scoped (auto-reset on commit/rollback). No risk of cross-tenant connection pool leakage.
-
-**Step 5: Implement GlobalExceptionHandler [C6]**
+Servlet `Filter` registered at `@Order(Ordered.HIGHEST_PRECEDENCE)` that clears `RlsContext` in a `finally` block, guaranteeing cleanup regardless of where in the chain an error occurs:
 
 ```java
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class RlsContextCleanupFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+            throws ServletException, IOException {
+        try {
+            chain.doFilter(req, res);
+        } finally {
+            RlsContext.clear();
+        }
+    }
+}
+```
+
+The existing `afterCompletion()` cleanup in `RlsInterceptor` remains as belt-and-suspenders.
+
+**Step 5: Flyway migration — `jpt_auth` role [v3 C1]**
+
+Create `V4__create_jpt_auth_role.sql`:
+```sql
+CREATE ROLE jpt_auth WITH LOGIN PASSWORD '${jpt_auth_password}' BYPASSRLS;  -- [v4 CR3-C3] Flyway placeholder
+GRANT CONNECT ON DATABASE jpt TO jpt_auth;
+GRANT USAGE ON SCHEMA public TO jpt_auth;
+
+-- [v4 SA-4] Column-level grants — principle of least privilege
+GRANT SELECT, INSERT ON users TO jpt_auth;
+GRANT UPDATE (password_hash, failed_login_attempts, locked_until, email_verified,
+              oauth_provider, oauth_id) ON users TO jpt_auth;
+GRANT SELECT, INSERT, DELETE ON email_tokens TO jpt_auth;
+
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jpt_auth;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO jpt_auth;  -- [v4 CR3-M4]
+```
+
+This role bypasses RLS for authentication operations (login, registration, email verification, OAuth2) while `jpt_app` remains RLS-governed for all tenant-scoped data.
+
+**Step 6: Implement Auth DataSource [v3 C1]**
+
+```java
+// AuthDataSourceConfig.java
+@Configuration
+public class AuthDataSourceConfig {
+    @Bean("authDataSource")
+    @ConfigurationProperties("spring.auth-datasource")
+    public DataSource authDataSource() { return DataSourceBuilder.create().build(); }
+
+    @Bean("authJdbcTemplate")
+    public JdbcTemplate authJdbcTemplate(@Qualifier("authDataSource") DataSource ds) {
+        return new JdbcTemplate(ds);
+    }
+}
+```
+
+Configure in `application.yml`:
+```yaml
+spring:
+  auth-datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: jpt_auth
+    password: ${JPT_AUTH_PASSWORD}
+  flyway:
+    placeholders:
+      jpt_auth_password: ${JPT_AUTH_PASSWORD}  # [v4 CR3-C3]
+```
+
+**Step 7: Implement RLS — HandlerInterceptor + AOP Aspect [v3 C2, v4 CR3-C1/C2/M2/M3]**
+
+The RLS mechanism uses two components:
+
+1. **`RlsInterceptor`** (Spring `HandlerInterceptor`): After authentication, extracts the authenticated user ID from `SecurityContext` and stores it in `RlsContext` (a `ThreadLocal<UUID>` holder). Clears the `ThreadLocal` in `afterCompletion()`.
+
+2. **`RlsAspect`** (Spring AOP `@Aspect`): Intercepts `@Transactional` methods and uses `set_config()` via `Session.doWork()` to guarantee the same JDBC connection:
+
+   ```java
+   @Aspect
+   @Component
+   @Order(1)  // [v4 CR3-C2] Fires AFTER TransactionInterceptor (order=0) opens the transaction
+   public class RlsAspect {
+       @Autowired private EntityManager em;
+
+       // [v4 CR3-M3] Exclude auth services — they use jpt_auth (BYPASSRLS), not RLS
+       @Before("@annotation(org.springframework.transaction.annotation.Transactional) " +
+               "&& !within(org.jphototagger.api.service.AuthService) " +
+               "&& !within(org.jphototagger.api.service.RefreshTokenService)")
+       public void setRlsContext() {
+           UUID userId = RlsContext.getCurrentUserId();
+           if (userId != null) {
+               // [v4 CR3-C1] Use set_config() — SET LOCAL doesn't accept bind parameters
+               // [v4 CR3-M2] Use Session.doWork() — guarantees same JDBC connection
+               em.unwrap(Session.class).doWork(connection -> {
+                   try (var stmt = connection.prepareStatement(
+                           "SELECT set_config('app.current_user_id', ?, true)")) {
+                       stmt.setString(1, userId.toString());
+                       stmt.execute();
+                   }
+                   // [v3 M2] Fail fast if nil UUID
+                   try (var stmt = connection.prepareStatement("SELECT assert_user_context()")) {
+                       stmt.execute();
+                   }
+               });
+           }
+       }
+   }
+   ```
+
+   **WARNING:** Never use string concatenation for `set_config` values. Always use parameterized queries. `UUID.toString()` is safe, but the pattern must not be adapted for non-UUID inputs.
+
+This guarantees `set_config` always executes within the transaction boundary on the same JDBC connection as subsequent queries. Transaction-scoped (auto-reset on commit/rollback). No risk of cross-tenant connection pool leakage.
+
+**Step 8: Implement GlobalExceptionHandler + ErrorResponse [C6, v3 M7]**
+
+```java
+// ErrorResponse.java [v3 M7]
+public record ErrorResponse(String error, int status) {}
+
 @ControllerAdvice
 public class GlobalExceptionHandler {
-    // All responses use consistent JSON: {"error": "message", "status": 400}
+    // All responses use ErrorResponse record for consistent JSON: {"error": "message", "status": 400}
     // 400 — MethodArgumentNotValidException, ConstraintViolationException
     // 401 — AuthenticationException (generic "Invalid credentials")
     // 404 — EntityNotFoundException
@@ -316,13 +627,28 @@ public class GlobalExceptionHandler {
 }
 ```
 
-**Step 6: Run tests, verify pass**
+**Step 9: Nginx rate limiting for `/actuator/health` [v4 SA-10]**
 
-**Step 7: Commit**
+Add to existing Nginx configuration:
+
+```nginx
+# Rate limit zone for health endpoint
+limit_req_zone $binary_remote_addr zone=health:1m rate=30r/m;
+
+# In server block:
+location /actuator/health {
+    limit_req zone=health burst=5 nodelay;
+    proxy_pass http://api:8080;
+}
+```
+
+**Step 10: Run tests, verify pass**
+
+**Step 11: Commit**
 
 ```bash
-git add api/src/main/java/org/jphototagger/api/security/ api/src/main/java/org/jphototagger/api/controller/GlobalExceptionHandler.java api/src/test/
-git commit -m "feat: Spring Security config — JWT, CSRF, RLS inspector, exception handler"
+git add api/src/main/java/org/jphototagger/api/security/ api/src/main/java/org/jphototagger/api/config/AuthDataSourceConfig.java api/src/main/java/org/jphototagger/api/controller/ api/src/main/java/org/jphototagger/api/dto/ErrorResponse.java api/src/main/resources/db/migration/V4__create_jpt_auth_role.sql nginx/ api/src/test/
+git commit -m "feat: Spring Security config — JWT, CSRF (SPA handler), RLS aspect (set_config, ordered), auth DataSource, exception handler, RLS cleanup filter, actuator hardening"
 ```
 
 ### Task 2.5: Auth Controller — Registration & Login
@@ -369,7 +695,8 @@ void loginReturnsJwtCookie() throws Exception {
             """))
         .andExpect(status().isOk())
         .andExpect(cookie().exists("jwt"))
-        .andExpect(cookie().httpOnly("jwt", true));
+        .andExpect(cookie().httpOnly("jwt", true))
+        .andExpect(cookie().secure("jwt", true));  // [v4 SA-12]
 }
 
 @Test
@@ -377,6 +704,13 @@ void loginReturnsGeneric401ForLockedAccount() throws Exception {
     // Register user, fail login 5 times with wrong password
     // 6th attempt (even with correct password): returns 401 "Invalid credentials"
     // NOT 423 — no distinction between wrong-password and locked [C7]
+}
+
+@Test
+void successfulLoginResetsFailedAttemptCounter() throws Exception {
+    // [v4 SA-7] Register user, fail login 3 times, then succeed
+    // Assert: failed_login_attempts == 0 after successful login
+    // Next wrong attempt should NOT lock the account (counter was reset)
 }
 
 // --- Refresh token tests [C5] ---
@@ -392,6 +726,14 @@ void refreshReturnsNewJwtAndRefreshCookies() throws Exception {
 void oldRefreshTokenIsInvalidAfterRotation() throws Exception {
     // Login, capture refresh token, refresh once (get new token)
     // Attempt refresh with the old token → 401
+}
+
+@Test
+void replayOfConsumedTokenRevokesEntireFamily() throws Exception {
+    // [v4 SA-8] Login (family A created), capture refresh token T1
+    // Refresh with T1 → get T2 (T1 consumed, T2 in family A)
+    // Replay T1 (consumed token) → 401 AND all tokens in family A revoked
+    // Attempt refresh with T2 → 401 (revoked by family kill)
 }
 
 @Test
@@ -424,13 +766,15 @@ public record LoginRequest(
 
 **Step 3: Implement AuthService**
 
+- **Uses `@Qualifier("authJdbcTemplate")` or `@Qualifier("authDataSource")` for all user lookups and creation** — bypasses RLS on the `users` table **[v3 C1]**
 - Password validation: >= 12 chars (enforced by `@Size` on DTO + `@Valid` on controller)
 - bcrypt cost factor 12
 - Account lockout: 5 failures → 15 min lock
 - **Timing side-channel mitigation [C7]:** Always perform `BCrypt.checkpw()` regardless of lockout status. After comparison, check `failedLoginAttempts >= 5 && lockedUntil > now()` — if locked, return generic `401 "Invalid credentials"` (same as wrong password). Never return a distinct status code or message for locked accounts.
+- **[v4 SA-7] Login counter reset:** On successful authentication (correct password AND not locked), reset `failed_login_attempts = 0` and `locked_until = NULL`.
 - Email verification token generation (SHA-256 stored, plaintext emailed via `EmailService`)
 
-**Step 4: Implement RefreshTokenService [C5]**
+**Step 4: Implement RefreshTokenService [C5, v4 SA-8]**
 
 - **Token format:** 256-bit cryptographically random value, base64url-encoded
 - **Redis key schema:** `refresh:{SHA-256(token)}` → JSON `{"userId": "...", "issuedAt": "...", "family": "..."}`
@@ -438,11 +782,13 @@ public record LoginRequest(
 - **TTL:** 30 days (configurable via `app.refresh-token-expiry-days`)
 - **Rotation:** On `POST /auth/refresh`:
   1. Validate incoming token (lookup `refresh:{SHA-256(token)}` in Redis)
-  2. Delete old token key from Redis
-  3. Remove old hash from `user_refresh:{userId}` set
-  4. Generate new refresh token + new JWT
-  5. Store new token key and add hash to user set
-  6. Return both as httpOnly cookies
+  2. **If token hash is not found but was previously part of a known family** → replay detected: revoke ALL tokens in that family (read `user_refresh:{userId}`, filter by family, delete each `refresh:{hash}` key, log security event). Return 401. **[v4 SA-8]**
+  3. Delete old token key from Redis
+  4. Remove old hash from `user_refresh:{userId}` set
+  5. Generate new refresh token + new JWT, **preserving the same `family` ID** **[v4 SA-8]**
+  6. Store new token key and add hash to user set
+  7. Return both as httpOnly cookies
+- **Family tracking implementation [v4 SA-8]:** Maintain a Redis Set `refresh_family:{familyId}` containing all token hashes ever issued in the family (including consumed ones). On rotation, add the new hash and keep the old hash in the family set. On replay detection (token not in `refresh:*` but found in `refresh_family:*`), revoke the entire family.
 - **Revocation on logout:** Delete token key from Redis, remove from user set
 - **Revocation on password change:** Read all hashes from `user_refresh:{userId}`, delete each `refresh:{hash}` key, then delete the set itself
 
@@ -455,8 +801,30 @@ public record LoginRequest(
 
 - `POST /auth/register` — validates with `@Valid`, creates user, sends verification email
 - `POST /auth/login` — validates credentials (always bcrypt), issues JWT + refresh token in httpOnly cookies
-- `POST /auth/refresh` — refresh token rotation flow via `RefreshTokenService`
+- `POST /auth/refresh` — refresh token rotation flow via `RefreshTokenService` (with family-based replay detection)
 - `POST /auth/logout` — clears cookies, revokes refresh token in Redis
+
+**[v4 SA-12] Cookie attributes:** All cookies must use `ResponseCookie` builder with full security attributes:
+
+```java
+ResponseCookie jwt = ResponseCookie.from("jwt", token)
+    .httpOnly(true)
+    .secure(true)        // HTTPS only
+    .sameSite("Lax")     // prevent cross-origin cookie sending
+    .path("/")
+    .maxAge(Duration.ofMinutes(15))
+    .build();
+
+ResponseCookie refresh = ResponseCookie.from("refresh", refreshToken)
+    .httpOnly(true)
+    .secure(true)
+    .sameSite("Lax")
+    .path("/auth/refresh")  // scoped to refresh endpoint only
+    .maxAge(Duration.ofDays(30))
+    .build();
+```
+
+Add test assertions for `Secure` and `SameSite` attributes on both cookies.
 
 **Step 7: Run tests, verify pass**
 
@@ -464,7 +832,7 @@ public record LoginRequest(
 
 ```bash
 git add api/src/main/java/org/jphototagger/api/controller/ api/src/main/java/org/jphototagger/api/service/ api/src/main/java/org/jphototagger/api/dto/ api/src/test/
-git commit -m "feat: auth endpoints — register, login, refresh, logout with token rotation"
+git commit -m "feat: auth endpoints — register, login, refresh, logout with token rotation and family replay detection"
 ```
 
 ### Task 2.6: OAuth2 Integration (Google/GitHub)
@@ -475,10 +843,12 @@ git commit -m "feat: auth endpoints — register, login, refresh, logout with to
 
 **Step 1: Write failing tests [M7 — expanded coverage]**
 
+All OAuth2 tests use `SecurityMockMvcRequestPostProcessors.oidcLogin()` from `spring-security-test` to simulate OAuth2 callbacks without hitting real providers. **[v3 M8]**
+
 ```java
 @Test
 void oauthLoginCreatesNewUser() {
-    // Simulate OAuth callback with new email
+    // Simulate OAuth callback with oidcLogin().oidcUser(mockUser) — new email
     // Assert: user created in DB with oauth_provider and oauth_id set
     // Assert: JWT cookie is issued
 }
@@ -506,10 +876,12 @@ void oauthLoginHandlesMissingEmail() {
 
 **Step 2: Implement OAuth2SuccessHandler**
 
+- **Uses `@Qualifier("authJdbcTemplate")` for user lookups and creation** — bypasses RLS **[v3 C1]**
 - On success: create user if new (set `oauthProvider`, `oauthId`), issue JWT + refresh token
 - If email already exists with password account: block login, show linking message
 - Never auto-merge by email
 - Handle missing email from provider gracefully
+- **[v4 SA-12]** Use `ResponseCookie` builder with `secure(true)`, `sameSite("Lax")`, `path("/")` for JWT cookie, same as `AuthController`.
 
 **Step 3: Run tests, verify pass**
 
@@ -528,10 +900,12 @@ git commit -m "feat: OAuth2 login (Google/GitHub) with no auto-merge"
 
 **Step 1: Write failing tests [M2 — with setup/assertions]**
 
+All photo tests seed data directly via `EntityManager` — no upload endpoint exists until Phase 3. **[v3 Q3]**
+
 ```java
 @Test
 void listPhotos_returnsOnlyUsersPhotos() {
-    // Setup: create 2 users, each with 2 photos
+    // Setup: create 2 users, each with 2 photos (via EntityManager)
     // Act: GET /photos as user1 with ?page=0&size=50
     // Assert: response contains only user1's 2 photos
     // Assert: response includes pagination metadata (totalElements, totalPages)
@@ -585,6 +959,8 @@ All list endpoints return `Page<T>` with `Pageable` (default size=50, max=100). 
 - `DELETE /photos/{id}` — soft delete + quota decrement (in same transaction via `SELECT FOR UPDATE`)
 - `GET /photos/trash?page=0&size=50` — trash view, paginated
 - `POST /photos/{id}/restore` — restore from trash + quota re-increment (in same transaction)
+
+**[v4 CR3-M6] `@Transactional` requirement:** `PhotoService.softDelete()` and `PhotoService.restore()` must be explicitly annotated `@Transactional` to ensure atomicity of the soft delete/restore + quota update operations and to trigger the `RlsAspect` for the full operation.
 
 **Step 3: Run tests, verify pass**
 
@@ -651,10 +1027,14 @@ void savedSearchCRUD() {
 
 All list endpoints return `Page<T>` with `Pageable`. **[C2]**
 
+**[v4 SA-5] Sort injection prevention:** All controllers calling native queries must construct `PageRequest.of(page, Math.min(size, 100))` without Sort. Native queries must hardcode `ORDER BY`.
+
 - **Keywords:** CRUD + hierarchical subtree query. Subtree query uses `@Query(nativeQuery = true)` with `WITH RECURSIVE` CTE — JPQL does not support recursive CTEs. **[M5]**
 - **Albums:** CRUD + add/remove photos. Cross-tenant isolation enforced by the Flyway composite FK constraint (`album_photos(album_id, user_id) → albums(id, user_id)` and `(photo_id, user_id) → photos(id, user_id)`). JPA entities use simple `@ManyToOne`; the composite FK is DB-level only. **[M6]**
 - **Search:** Full-text search (via `PhotoRepository.searchByText` native query) + EXIF field queries (native queries with JSONB operators) + keyword search (join through `photo_keywords`)
 - **Saved searches:** CRUD
+
+**[v4 CR3-M6] `@Transactional` requirement:** `AlbumService.addPhoto()` and any other multi-step service methods must be explicitly annotated `@Transactional`.
 
 **Step 3: Run tests, verify pass**
 
@@ -696,6 +1076,8 @@ void generalRateLimitRejects6thRequestInTestProfile() {
 **Step 2: Implement Bucket4j filter**
 
 Per-user token buckets stored in Redis. Production limits: 100 uploads/hour, 1000 general requests/hour. Test limits configured via properties for fast test execution.
+
+**[v4 CR3-M5] Bucket4j module verification:** Spring Boot ships Lettuce as the default Redis client. Verify that `com.bucket4j:bucket4j-redis:8.14.0` works with Lettuce. If it requires Jedis, switch to `com.bucket4j:bucket4j-lettuce:8.14.0` or the appropriate Lettuce-compatible module.
 
 **Step 3: Run tests, verify pass**
 

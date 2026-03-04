@@ -51,7 +51,19 @@ git commit -m "feat: MinIO storage service with pre-signed URLs"
 - Modify: `api/src/main/java/org/jphototagger/api/controller/PhotoController.java`
 - Modify: `api/src/main/java/org/jphototagger/api/service/PhotoService.java`
 
-**Step 1: Write failing tests**
+**Step 1: Flyway migration — fix unique constraint for soft-deleted re-uploads**
+
+The V1 migration's `UNIQUE (user_id, content_hash)` constraint does not exclude soft-deleted rows. If a user deletes a photo (soft delete) and re-uploads the same file, the INSERT violates the constraint. Fix by replacing the full unique constraint with a partial unique index:
+
+```sql
+-- V4__fix_content_hash_unique_constraint.sql
+ALTER TABLE photos DROP CONSTRAINT IF EXISTS photos_user_id_content_hash_key;
+CREATE UNIQUE INDEX photos_user_content_hash_active_idx ON photos (user_id, content_hash) WHERE deleted_at IS NULL;
+```
+
+This allows re-uploading a file that was previously soft-deleted while still preventing duplicate active uploads.
+
+**Step 2: Write failing tests**
 
 ```java
 @Test
@@ -65,25 +77,35 @@ void upload_rejectsWhenQuotaExceeded() { }
 
 @Test
 void upload_concurrentDuplicatesHandledByDbConstraint() { }
+
+@Test
+void upload_rejectsUnverifiedUser() { }
+
+@Test
+void upload_allowsVerifiedUser() { }
+
+@Test
+void upload_succeedsAfterSoftDeletedDuplicate() { }
 ```
 
-**Step 2: Implement upload endpoint**
+**Step 3: Implement upload endpoint**
 
 - `POST /photos/upload` — multipart upload
+- **Email verification gate:** Reject uploads from users where `email_verified = false` with `403 Forbidden` and message "Email verification required before uploading". This implements the design doc's soft-gating requirement (v4.0, [CR#5]).
 - Compute SHA-256 while streaming
-- Fast-path dedup check: query by (user_id, content_hash)
+- Fast-path dedup check: query by (user_id, content_hash) WHERE deleted_at IS NULL
 - DB-level dedup: catch `UniqueConstraintViolationException` → 409
 - Quota check with `SELECT FOR UPDATE` on user row
 - Stream to MinIO
 - Insert `photos` row with `processing_status = 'pending'`
 - Enqueue `photo-jobs` to Redis Streams
 
-**Step 3: Run tests, verify pass**
+**Step 4: Run tests, verify pass**
 
-**Step 4: Commit**
+**Step 5: Commit**
 
 ```bash
-git commit -m "feat: upload endpoint with dedup, quota enforcement, Redis job enqueue"
+git commit -m "feat: upload endpoint with dedup, quota enforcement, email gate, Redis job enqueue"
 ```
 
 ### Task 3.3: Worker — Spring Boot Application Scaffold
@@ -216,6 +238,11 @@ git commit -m "feat: worker image processing pipeline — Tika, libraw, libvips,
 - Create: `api/src/main/java/org/jphototagger/api/scheduler/TrashPurgeScheduler.java`
 - Create: `api/src/main/java/org/jphototagger/api/scheduler/OrphanReconciliationScheduler.java`
 
+**Files:**
+- Create: `api/src/main/java/org/jphototagger/api/scheduler/TrashPurgeScheduler.java`
+- Create: `api/src/main/java/org/jphototagger/api/scheduler/OrphanReconciliationScheduler.java`
+- Create: `api/src/main/java/org/jphototagger/api/scheduler/UnverifiedAccountPurgeScheduler.java`
+
 **Step 1: Write failing tests**
 
 ```java
@@ -227,6 +254,12 @@ void trashPurge_enqueuesMinioDeleteJob() { }
 
 @Test
 void orphanReconciliation_detectsOrphanedMinioObjects() { }
+
+@Test
+void unverifiedPurge_deletesAccountsOlderThan7Days() { }
+
+@Test
+void unverifiedPurge_keepsVerifiedAccounts() { }
 ```
 
 **Step 2: Implement TrashPurgeScheduler**
@@ -242,12 +275,20 @@ void orphanReconciliation_detectsOrphanedMinioObjects() { }
 - Compare MinIO object listing vs DB `storage_key` values
 - Enqueue unreferenced objects for deletion
 
-**Step 4: Run tests, verify pass**
+**Step 4: Implement UnverifiedAccountPurgeScheduler**
 
-**Step 5: Commit**
+- `@Scheduled(cron = "0 30 3 * * *")` — daily at 3:30 AM (after trash purge)
+- Delete users where `email_verified = false` AND `created_at < now() - INTERVAL '7 days'`
+- Cascade: delete all photos (enqueue MinIO delete jobs), keywords, albums, saved searches
+- Uses the `authDataSource` (BYPASSRLS) since unverified user cleanup must access users table directly
+- Implements design doc requirement (v4.0, [CR#5]): "unverified accounts soft-gated (no uploads) with 7-day auto-purge"
+
+**Step 5: Run tests, verify pass**
+
+**Step 6: Commit**
 
 ```bash
-git commit -m "feat: scheduled tasks — trash purge, orphan reconciliation"
+git commit -m "feat: scheduled tasks — trash purge, orphan reconciliation, unverified account purge"
 ```
 
 ---
