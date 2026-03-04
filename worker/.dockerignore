@@ -1,0 +1,10 @@
+.git
+.gradle
+.idea
+node_modules
+src
+build/tmp
+build/classes
+build/generated
+build/reports
+*.md

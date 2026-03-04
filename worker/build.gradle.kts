@@ -28,5 +28,6 @@ dependencies {
 
 // No main class in Phase 0 — disable bootJar to prevent build failure
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    archiveFileName.set("app.jar")
     enabled = false
 }
