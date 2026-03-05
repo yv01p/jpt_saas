@@ -16,6 +16,52 @@
 
 ## Changelog
 
+### v6.0 — 2026-03-05
+Revised following sixth critical implementation review (`docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-6.md`). All four critical issues and seven minor issues addressed. Critical review 3 issues re-verified as correctly fixed in v4.0.
+
+| ID | Change |
+|----|--------|
+| CI-1 | `TrashPurgeScheduler` pagination fixed: always query page 0; stable `List<Photo>` loop replacing `Slice<Photo>` offset-advancing loop; note added to verify `UnverifiedAccountPurgeScheduler` at implementation time |
+| CI-2 | `MetadataExtractor` EXIF sanitization replaced `Collectors.toMap()` with `HashMap.forEach()` to handle null EXIF tag values without NPE; test added |
+| CI-3 | Upload endpoint: explicit `DigestInputStream` → tmpfs temp file buffering step (Step 0) added before Tika detection and MinIO upload; `getInputStream()` called exactly once; API container tmpfs documented with `.env.example` sizing pattern; `spring.servlet.multipart.location=/tmp` added to `application.yml` spec |
+| CI-4 | `PhotoJobConsumer` accepts `PENDING` and `PROCESSING` as valid initial states; `DONE`/`FAILED` are XACKed and skipped; null `storage_key` guard added (was MI-8); two tests added |
+| MI-1 | `MIME_TO_EXT` allowlist replaced `Map.of()` with `Map.ofEntries()` to support >10 RAW MIME type entries without compile error |
+| MI-2 | `ProcessingStatus.toDbValue()` dropped; all SQL literals updated to uppercase to match `@Enumerated(EnumType.STRING)`; SQL case consistency note added |
+| MI-3 | `sanitize()` null-safe helper extracted in `MetadataExtractor`; used for `rawCaption`, `rawTitle`, `rawDescription` instead of bare `Jsoup.parse()` |
+| MI-4 | `OrphanReconciliationScheduler`: non-originals paths (thumbnails/) skipped at top of loop; thumbnail keys constructed from parsed `photo_id` and included in orphan delete-job |
+| MI-5 | V6 migration: pre-migration negative-value cleanup step added; `NOT VALID` + `VALIDATE CONSTRAINT` pattern used to avoid blocking table scan |
+| MI-6 | ExifTool finally block uses `Files.deleteIfExists()` + logged `IOException` instead of silent `File.delete()` |
+| MI-7 | `File.createTempFile()` for ExifTool output uses explicit `new File("/tmp")` directory argument, consistent with established `Path.of("/tmp")` pattern |
+
+### v5.0 — 2026-03-04
+Revised following second security audit (`docs/plans/2026-03-04-saas-conversion-phase-3-security-audit-2.md`). All five findings addressed.
+
+| ID | Change |
+|----|--------|
+| SA2-F1 | `MetadataExtractor` sanitizes ALL string-typed EXIF values before JSONB assembly using `Jsoup.parse(s).text()` stream operation; test added |
+| SA2-F2 | ExifTool `ProcessBuilder` stdout redirected to temp file (Option A) before `waitFor()` — eliminates pipe buffer exhaustion hang; test added |
+| SA2-F3 | Java library versions pinned in plan: Tika 2.9.2, metadata-extractor 2.19.0, Jsoup 1.18.3, MinIO SDK 8.5.12; Trivy extended to JAR SBOM scan |
+| SA2-F4 | Upload compensating Tx uses `GREATEST(0, used_bytes - :file_size)`; new Flyway migration adds `CHECK (used_bytes >= 0)` constraint on `users` table |
+| SA2-F5 | null-`storage_key` cleanup no longer enqueues delete-jobs (storage keys unknown; MinIO orphans handled by `OrphanReconciliationScheduler`); null-key guard added to `DeleteJobConsumer` head |
+
+### v4.0 — 2026-03-04
+Revised following third critical implementation review (`docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-3.md`) and first security audit (`docs/plans/2026-03-04-saas-conversion-phase-3-security-audit-1.md`). All two critical issues and all two minor issues from review 3 addressed. All eight security findings addressed.
+
+| ID | Change |
+|----|--------|
+| CR3-CI-1 | PEL deduplication paginated into `Set<String>` using repeated `XPENDING ... COUNT 1000` calls before recovery scan; COUNT 100 single-call removed |
+| CR3-CI-2 | Lock refresh replaced with Lua ownership-check script executed via Lettuce `sync().eval()`; recovery aborts on nil return; test added |
+| CR3-MI-1 | `Files.createTempFile(Path.of("/tmp"), ...)` — compile error fix |
+| CR3-MI-2 | null-`storage_key` recovery uses a single SQL CTE to atomically delete photo row and decrement `used_bytes`; `GREATEST(0, ...)` guards against negative quota |
+| SA-1 | ExifTool pinned via `apt-get install libimage-exiftool-perl=X.Y.Z` (≥ 12.24 minimum); Trivy CI scan added to worker image build |
+| SA-2 | Worker uses dedicated MinIO access key scoped to `GetObject`, `PutObject`, `DeleteObject` only; provisioning step added to Task 3.1; worker Docker Compose uses `WORKER_MINIO_ACCESS_KEY`/`WORKER_MINIO_SECRET_KEY` |
+| SA-3 | File extension always derived from Tika MIME type via allowlist at upload time in API; `415 Unsupported Media Type` on unknown type; original filename stored in `original_filename` column for display only; never used in storage key or file I/O paths |
+| SA-4 | `OrphanReconciliationScheduler` identifies orphans by `SELECT EXISTS(SELECT 1 FROM photos WHERE id = :photo_id)` — no `deleted_at` or `storage_key` filter; eliminates TOCTOU race with in-progress uploads |
+| SA-5 | `MetadataExtractor` sanitizes `caption`, `title`, `description` with `Jsoup.parse(rawValue).text()` before DB write; Phase 4 note added |
+| SA-6 | Added `photoStatus_anotherUsersPhotoReturns403()` test stub; ownership check citation added to Task 3.2 implementation notes |
+| SA-7 | Note added: update `docs/plans/2026-02-24-saas-conversion-design.md` Section 7 worker tmpfs to `- /tmp:size=1g,mode=1777` |
+| SA-8 | Worker Dockerfile spec: pin `libraw-dev`, `libvips-tools`, `libimage-exiftool-perl` to exact apt versions; pin `FROM` base image to digest |
+
 ### v3.0 — 2026-03-04
 Revised following second critical implementation review (see `docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-2.md`). All five critical issues and all twelve minor issues addressed. One clarification question resolved.
 
@@ -77,7 +123,32 @@ Initial plan.
 - Create: `api/src/main/java/org/jphototagger/api/config/MinioConfig.java`
 - Create: `api/src/main/java/org/jphototagger/api/service/StorageService.java`
 
-**Step 1: Write failing tests — pre-signed URL generation**
+**Step 1: Provision dedicated worker MinIO access key**
+
+The worker must use its own scoped MinIO credentials — not the API's credentials. The API credentials have full bucket access; the worker must be restricted to object-level operations only.
+
+Create a `worker-policy.json`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+    "Resource": "arn:aws:s3:::jpt-photos/*"
+  }]
+}
+```
+
+Provision via `mc`:
+```bash
+mc admin user add minio worker-access <strong-secret>
+mc admin policy create minio worker-policy worker-policy.json
+mc admin policy attach minio worker-policy --user worker-access
+```
+
+The worker Docker Compose service uses `WORKER_MINIO_ACCESS_KEY` and `WORKER_MINIO_SECRET_KEY` environment variables (separate from the API's `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`). The worker module's `MinioConfig` uses these to construct its `MinioClient` bean.
+
+**Step 2: Write failing tests — pre-signed URL generation**
 
 Each test stub must include a comment describing the expected assertion before implementation begins.
 
@@ -103,7 +174,7 @@ void minioPublicClient_isNeverUsedForUploadOrDownload() {
 }
 ```
 
-**Step 2: Implement MinioConfig — dual-client approach**
+**Step 3: Implement MinioConfig — dual-client approach**
 
 The MinIO Java SDK's `GetPresignedObjectUrlArgs` does not accept a base URL override — it generates URLs against the endpoint the `MinioClient` was constructed with. The correct solution is two `MinioClient` instances:
 
@@ -114,16 +185,16 @@ Expose two properties:
 - `minio.url` — internal Docker hostname
 - `minio.public-url` — public-facing URL returned to browsers
 
-**Step 3: Implement StorageService**
+**Step 4: Implement StorageService**
 
 - Upload/download/delete via `minioInternalClient` only
 - Generate pre-signed URLs via `minioPublicClient` only (15 min thumbnails, 1 hour originals)
 - Delete objects
 - Bucket path layout: `{user_id}/originals/{photo_id}.{ext}`, `{user_id}/thumbnails/{photo_id}_sm.jpg`, `{user_id}/thumbnails/{photo_id}_md.jpg`
 
-**Step 4: Run tests, verify pass**
+**Step 5: Run tests, verify pass**
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git commit -m "feat: MinIO storage service with pre-signed URLs and public URL substitution"
@@ -144,16 +215,16 @@ Define a shared enum accessible to both API and worker modules:
 ```java
 public enum ProcessingStatus {
     PENDING, PROCESSING, DONE, FAILED;
-
-    public String toDbValue() {
-        return name().toLowerCase();
-    }
 }
 ```
 
 Use `@Enumerated(EnumType.STRING)` on the `Photo` JPA entity. Use this enum (not raw strings) everywhere `processing_status` is read or written.
 
-**Step 2: Flyway migration — fix unique constraint for soft-deleted re-uploads**
+**SQL literal case:** All native SQL referencing `processing_status` must use uppercase string literals (`'PENDING'`, `'PROCESSING'`, `'DONE'`, `'FAILED'`) to match `@Enumerated(EnumType.STRING)` storage. Do not use lowercase literals — native queries using lowercase will return 0 rows against uppercase-stored data.
+
+**Step 2: Flyway migrations**
+
+**V5 — fix unique constraint for soft-deleted re-uploads:**
 
 The V1 migration's `UNIQUE (user_id, content_hash)` constraint does not exclude soft-deleted rows. Fix by replacing the full unique constraint with a partial unique index:
 
@@ -164,6 +235,28 @@ CREATE UNIQUE INDEX photos_user_content_hash_active_idx ON photos (user_id, cont
 ```
 
 This allows re-uploading a file that was previously soft-deleted while still preventing duplicate active uploads.
+
+**V6 — add non-negative constraint on `used_bytes` (SA2-F4):**
+
+```sql
+-- V6__add_used_bytes_non_negative_constraint.sql
+
+-- Step 1: Repair any pre-existing negative values before constraining
+UPDATE users SET used_bytes = 0 WHERE used_bytes < 0;
+
+-- Step 2: Add constraint without validating existing rows (instant, no blocking table scan)
+ALTER TABLE users
+    ADD CONSTRAINT users_used_bytes_non_negative CHECK (used_bytes >= 0) NOT VALID;
+
+-- Step 3: Validate existing rows with a weaker lock (allows concurrent reads)
+ALTER TABLE users VALIDATE CONSTRAINT users_used_bytes_non_negative;
+```
+
+This is a hard backstop: any code path that would produce a negative `used_bytes` — present or future — fails with a constraint violation rather than silently corrupting data. The upload compensating Tx and the null-`storage_key` CTE both already apply `GREATEST(0, ...)` floor guards; this constraint makes the guarantee structural.
+
+**Why `NOT VALID` + `VALIDATE CONSTRAINT`:** Adding a `CHECK` constraint without `NOT VALID` acquires `ACCESS EXCLUSIVE` and scans all existing rows. Any row with `used_bytes < 0` (from prior bugs) blocks migration. The cleanup step handles corrupt data; `NOT VALID` skips the scan (instant); `VALIDATE CONSTRAINT` confirms correctness under a weaker `SHARE UPDATE EXCLUSIVE` lock that allows concurrent reads.
+
+**Phase 4 note:** See Phase 4 Task 4.8 for the quota display floor guard (`Math.max(0, quota.usedBytes)`) required in the settings page.
 
 **Step 3: Write failing tests**
 
@@ -209,21 +302,97 @@ void upload_succeedsAfterSoftDeletedDuplicate() {
 void upload_minioFailureRollsBackQuotaAndPhotoRow() {
     // assert used_bytes unchanged and photo row absent when MinIO upload throws
 }
+
+@Test
+void upload_withMaliciousFilenameExtension_usesNormalizedExtension() {
+    // assert storage_key contains only the MIME-derived extension regardless of uploaded filename
+}
+
+@Test
+void photoStatus_anotherUsersPhotoReturns403() {
+    // assert GET /api/photos/{id}/status returns 403 when id belongs to a different user
+}
+
+@Test
+void upload_computesSha256AndUploadsToMinioFromTempFile() {
+    // assert multipartFile.getInputStream() is called exactly once;
+    // assert MinIO receives correct file content via temp file path (not original stream)
+}
 ```
 
 **Step 4: Implement upload endpoint**
 
 - `POST /photos/upload` — multipart upload
 - **Max upload size:** Confirm `spring.servlet.multipart.max-file-size=200MB` is set in `api/src/main/resources/application.yml` per design doc [M4]. Return HTTP 413 with a user-readable message when exceeded.
+- **`spring.servlet.multipart.location`:** Set to `/tmp` in `api/src/main/resources/application.yml` so Spring's own multipart temp files also land on the tmpfs mount.
+- **API container tmpfs:** The API `docker-compose.yml` service must declare a tmpfs for `/tmp`. Use the `.env.example` pattern for operator-configurable sizing without modifying `docker-compose.yml`:
+  ```yaml
+  # docker-compose.yml
+  api:
+    tmpfs:
+      - /tmp:size=${API_TMPFS_SIZE:-512m},mode=1777
+
+  worker:
+    tmpfs:
+      - /tmp:size=${WORKER_TMPFS_SIZE:-1g},mode=1777
+  ```
+  ```
+  # .env.example (commit this; operators copy to .env and tune for their VPS)
+  API_TMPFS_SIZE=512m
+  WORKER_TMPFS_SIZE=1g
+  ```
+  The `:-default` syntax keeps CI working without a `.env` file. Update the worker's existing tmpfs declaration in Task 3.5 to use `${WORKER_TMPFS_SIZE:-1g}` consistently.
 - **Email verification gate:** Reject uploads from users where `email_verified = false` with `403 Forbidden` and message "Email verification required before uploading" (design doc v4.0, [CR#5]).
 - **Quota exceeded:** Return HTTP 402 Payment Required when `used_bytes + file_size > quota_bytes`.
+
+- **File extension derivation — MIME-based only:**
+  Run Apache Tika on the file's magic bytes immediately after streaming the request body to detect the MIME type. Map to extension using a maintained allowlist:
+  ```java
+  private static final Map<String, String> MIME_TO_EXT = Map.ofEntries(
+      Map.entry("image/jpeg",         "jpg"),
+      Map.entry("image/png",          "png"),
+      Map.entry("image/tiff",         "tiff"),
+      Map.entry("image/x-canon-cr2",  "cr2"),
+      Map.entry("image/x-nikon-nef",  "nef"),
+      Map.entry("image/x-sony-arw",   "arw"),
+      Map.entry("image/x-adobe-dng",  "dng")
+      // add full RAW list at implementation time — check Tika's MediaType registry
+      // Map.ofEntries() has no entry-count limit; Map.of() is limited to 10 pairs
+  );
+  ```
+  If the MIME type has no mapping, reject with `415 Unsupported Media Type` before any MinIO upload or DB write.
+
+  The user-supplied filename extension is **never** used in `storage_key` or any file I/O path. If the original filename must be preserved for user display, store it in a separate `original_filename` column (display-only).
+
+  **Rationale:** User-supplied extensions are unconstrained and user-controlled. Tika magic-byte detection is system-controlled, validated, and produces a known-good extension. This eliminates an entire class of input-confusion attacks on storage keys and temp file paths.
+
+- **Ownership check on status endpoint:** `GET /api/photos/{id}/status` must enforce `photo.userId == currentUser.id` at the service layer — the same ownership guard used for all photo endpoints in prior phases. This is not a "lightweight read-only" exemption. Cite the Phase 2 ownership check pattern explicitly in the implementation.
+
 - **Transaction order — keep the row lock as narrow as possible:**
-  1. *(No transaction)* Stream request body; compute SHA-256 hash
+  0. *(No transaction)* **Buffer request body to tmpfs temp file; compute SHA-256 simultaneously.** An HTTP multipart `InputStream` can only be consumed once — this step makes the body available to Tika (step 1) and MinIO upload (step 4) without re-reading the original stream:
+     ```java
+     Path uploadTemp = Files.createTempFile(Path.of("/tmp"), "upload-", ".tmp");
+     try {
+         MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+         try (DigestInputStream dis = new DigestInputStream(multipartFile.getInputStream(), sha256)) {
+             Files.copy(dis, uploadTemp, StandardCopyOption.REPLACE_EXISTING);
+         }
+         String contentHash = HexFormat.of().formatHex(sha256.digest());
+         long fileSize = Files.size(uploadTemp);
+
+         // ... steps 1–7 inside this try block ...
+
+     } finally {
+         Files.deleteIfExists(uploadTemp);   // guaranteed cleanup on Tika, DB, or MinIO failure
+     }
+     ```
+     `getInputStream()` is called exactly once. All subsequent operations read from `uploadTemp`. The `finally` block guarantees temp file cleanup regardless of which step fails.
+  1. *(No transaction)* Run Tika on magic bytes — read from `uploadTemp`, not the original stream → detect MIME type → map to ext via allowlist → reject 415 if no mapping
   2. *(No transaction)* Fast-path dedup check — `SELECT` by `(user_id, content_hash) WHERE deleted_at IS NULL` (read-only, no lock)
-  3. **Tx 1 (milliseconds):** `SELECT FOR UPDATE` on user row → validate quota → `INSERT INTO photos` (`processing_status = PENDING`, no `storage_key` yet) → increment `used_bytes` → **commit**
-  4. *(No transaction)* Upload to MinIO
-  5. **On MinIO failure:** compensating Tx — delete the photo row, decrement `used_bytes`, return 500. If the compensating Tx itself fails: log at CRITICAL severity (never silent); the `storage_key IS NULL` cleanup in `TrashPurgeScheduler` will recover the quota drift on its next run.
-  6. **Tx 2 (milliseconds):** `UPDATE photos SET storage_key = ?, processing_status = PENDING WHERE id = ?` → **commit**
+  3. **Tx 1 (milliseconds):** `SELECT FOR UPDATE` on user row → validate quota → `INSERT INTO photos` (`processing_status = 'PENDING'`, no `storage_key` yet, `file_size` and `original_filename` populated) → increment `used_bytes` → **commit**
+  4. *(No transaction)* Upload to MinIO — read from `uploadTemp`
+  5. **On MinIO failure:** compensating Tx — delete the photo row, decrement `used_bytes` using `GREATEST(0, used_bytes - :file_size)` (SA2-F4: floor guard consistent with the null-`storage_key` CTE; the V6 `CHECK (used_bytes >= 0)` constraint provides a hard backstop), return 500. If the compensating Tx itself fails: log at CRITICAL severity (never silent); the null-`storage_key` cleanup in `TrashPurgeScheduler` will recover the quota drift on its next run.
+  6. **Tx 2 (milliseconds):** `UPDATE photos SET storage_key = ?, processing_status = 'PENDING' WHERE id = ?` → **commit**
   7. *(No transaction)* Enqueue `photo-jobs` to Redis Streams
 - DB-level dedup: catch `UniqueConstraintViolationException` → 409
 - This order ensures: (a) the row lock is held for milliseconds not seconds, (b) a DB row always exists before any MinIO object, so orphan reconciliation can always find and clean up on failure
@@ -354,12 +523,51 @@ void startupRecovery_onlyOneInstanceReenqueuesWhenLockContested() {
 void consumer_usesStableConsumerNameAcrossRestarts() {
     // assert consumer name is hostname+PID and consistent within a process lifecycle
 }
+
+@Test
+void startupRecovery_pelPaginationCoversAllEntries() {
+    // assert photos whose PEL entries fall beyond position 100 are still excluded from re-enqueue
+}
+
+@Test
+void startupRecovery_abortsWhenLockExpiredMidScan() {
+    // assert recovery does not continue scanning after lock refresh Lua script returns nil
+}
+
+@Test
+void deleteJobConsumer_xacksAndSkipsMessageWithNullOriginalKey() {
+    // assert XACK is called and no MinIO delete is attempted when originalKey is null or blank (SA2-F5)
+}
+
+@Test
+void photoJobConsumer_reprocessesPhotoWithProcessingStatus() {
+    // assert that when photo has processing_status=PROCESSING (simulating prior worker crash
+    // recovered via XAUTOCLAIM), consumer re-processes it and correctly sets DONE or FAILED
+}
+
+@Test
+void photoJobConsumer_xacksAndSkipsMessageWithNullStorageKey() {
+    // assert XACK is called and no MinIO download is attempted when storage_key is null
+    // (photo stuck between Tx 1 and Tx 2 of upload; TrashPurgeScheduler will clean up)
+}
 ```
 
 **Step 2: Implement PhotoJobConsumer**
 
 - `XREADGROUP` on `photo-jobs` stream using group `photo-processors` and stable consumer name
-- Validate `photo_id` exists and status is `PENDING`
+- After fetching photo from DB, route on all four states before doing any work:
+  - `DONE` → XACK and skip (already successfully processed; duplicate delivery)
+  - `FAILED` → XACK and skip (terminal state; do not re-process)
+  - `PENDING` or `PROCESSING` → proceed (PROCESSING covers XAUTOCLAIM reclaim of a crashed worker's in-flight job — the most common recovery path)
+  - `storage_key IS NULL` → XACK and skip (upload incomplete; `TrashPurgeScheduler` null-key cleanup will recover within 1 hour):
+    ```java
+    if (photo.getStorageKey() == null) {
+        log.error("photo {} has null storage_key — XACK and skip; " +
+                  "TrashPurgeScheduler will clean up", photoId);
+        redisCommands.xack(STREAM, GROUP, messageId);
+        return;
+    }
+    ```
 - Update status to `PROCESSING`
 - Call processing pipeline (Task 3.5)
 - Update status to `DONE` or `FAILED`
@@ -373,10 +581,21 @@ void consumer_usesStableConsumerNameAcrossRestarts() {
   - If under the retry limit: leave unacknowledged — XAUTOCLAIM will retry after the idle window
   - Note: XPENDING counts cumulative deliveries across all consumers in the group — correct semantic for cross-instance retry tracking
 
+**Phase 4 note:** The `/api/photos/{id}/status` response should include a `failureReason` field (populated by the worker on terminal failure; null otherwise). See Phase 4 Task 4.5 for how the upload UI maps failure reason codes to user-readable messages.
+
 **Step 3: Implement DeleteJobConsumer**
 
 - `XREADGROUP` on `delete-jobs` stream using group `delete-processors`
 - Parse all four message fields: `photo_id`, `original_key`, `thumbnail_sm`, `thumbnail_md`
+- **Null-key guard (SA2-F5):** Before any MinIO call, validate that `original_key` is non-null and non-blank. If not, log at ERROR, XACK the message, and return — do not attempt MinIO deletion:
+  ```java
+  if (originalKey == null || originalKey.isBlank()) {
+      log.error("delete-job received with null originalKey — XACK and skip, photo_id={}", photoId);
+      redisCommands.xack(DELETE_JOBS_STREAM, CONSUMER_GROUP, messageId);
+      return;
+  }
+  ```
+  This prevents a cascading retry storm and dead-letter buildup if a malformed message enters the stream by any path.
 - Delete all three MinIO keys per message
 - `XACK`
 
@@ -390,9 +609,41 @@ void consumer_usesStableConsumerNameAcrossRestarts() {
 - **Acquire distributed lock first:** `SET worker:startup-recovery-lock {instanceId} NX PX 300000` (5 minute TTL)
 - Only the instance that acquires the lock performs the recovery scan
 - Instances that do not acquire the lock skip recovery and log accordingly
-- **Lock-refresh (page-refresh pattern):** Scan in batches; after processing each page, extend the lock TTL by another 5 minutes (`SET worker:startup-recovery-lock {instanceId} XX PX 300000`). This handles arbitrarily large recovery scans without an unbounded TTL.
-- **Idempotency — PEL check before re-enqueue:** Before re-enqueueing a `photo_id`, call `XPENDING photo-jobs photo-processors - + COUNT 100` to get the current Pending Entry List. Re-enqueue only photos whose `photo_id` is absent from the PEL. This prevents duplicate stream entries across restart cycles (which would reset the delivery counter and cause failed jobs to loop indefinitely).
-- Lock holder: page through `pending`/`processing` rows where `deleted_at IS NULL`; for each batch, PEL-check then re-enqueue missing entries
+
+- **Lock-refresh (page-refresh pattern with ownership verification):** After processing each batch, refresh the lock using a Lua script that atomically verifies ownership before extending TTL:
+  ```lua
+  -- refresh-lock.lua
+  if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("SET", KEYS[1], ARGV[1], "XX", "PX", ARGV[2])
+  else
+    return nil
+  end
+  ```
+  Execute via Lettuce `sync().eval(script, ScriptOutputType.STATUS, keys, args)`. If the script returns `nil`, the instance has lost the lock (e.g., due to a GC pause exceeding the TTL during which another instance acquired the lock). **Abort recovery immediately** and log at ERROR. Do not continue scanning. This prevents two instances from concurrently executing recovery, which would re-enqueue the same photos twice and reset their delivery counters.
+
+  **Why `SET XX` alone is insufficient:** `XX` checks that the key exists but not the current value. If the lock expires and a second instance acquires it before the first instance issues the refresh, the `XX` command still succeeds (key exists) and overwrites the second instance's value — both instances believe they hold the lock.
+
+- **Idempotency — paginated PEL check before re-enqueue:** Before the DB scan begins, paginate the full PEL into a `Set<String>` to use as a deduplication filter:
+  ```java
+  Set<String> pelPhotoIds = new HashSet<>();
+  String cursor = "-";
+  List<PendingMessage> page;
+  do {
+      page = redisCommands.xpending(PHOTO_JOBS_STREAM, CONSUMER_GROUP,
+          Range.create(cursor, "+"), 1000);
+      for (PendingMessage msg : page) {
+          pelPhotoIds.add(msg.getBody().get("photo_id"));
+      }
+      if (!page.isEmpty()) {
+          cursor = page.get(page.size() - 1).getId().getValue();
+      }
+  } while (page.size() == 1000);
+  ```
+  Re-enqueue only photos whose `photo_id` is absent from `pelPhotoIds`. This prevents duplicate stream entries across restart cycles (which would reset the delivery counter and cause failed jobs to loop indefinitely).
+
+  **Why COUNT 100 is insufficient:** A single `XPENDING ... COUNT 100` returns at most 100 entries. After a large-scale outage (>100 in-flight jobs), entries beyond position 100 are invisible. Photos at position 101+ appear absent from the PEL and are incorrectly re-enqueued. Paginating until the result set is empty guarantees full coverage regardless of PEL size.
+
+- Lock holder: page through `'PENDING'`/`'PROCESSING'` rows where `deleted_at IS NULL`; for each batch, PEL-check then re-enqueue missing entries; refresh lock TTL after each batch using the Lua script above
 
 **Step 6: Run tests, verify pass**
 
@@ -411,6 +662,50 @@ git commit -m "feat: worker Redis Streams consumers with retry, dead-letter, and
 - Create: `worker/src/main/java/org/jphototagger/worker/pipeline/TikaValidator.java`
 - Create: `worker/src/main/java/org/jphototagger/worker/pipeline/ThumbnailGenerator.java`
 - Create: `worker/src/main/java/org/jphototagger/worker/pipeline/MetadataExtractor.java`
+
+**Java dependency pinning (SA2-F3):**
+
+Pin all Java libraries that process user-uploaded content to exact versions for reproducible builds and CVE auditability. Verify against Maven Central for the current stable release at implementation time.
+
+```groovy
+// api/build.gradle and worker/build.gradle
+implementation 'org.apache.tika:tika-core:2.9.2'            // pin; verify latest stable
+implementation 'com.drewnoakes:metadata-extractor:2.19.0'   // pin; verify latest stable
+implementation 'org.jsoup:jsoup:1.18.3'                     // pin; verify latest stable
+implementation 'io.minio:minio:8.5.12'                      // pin; verify latest stable
+```
+
+Rationale: Tika processes file magic bytes, metadata-extractor parses full binary EXIF/IPTC/XMP content, and Jsoup performs sanitization — all handling user-controlled data. Unpinned versions are non-reproducible and cannot be audited against CVE databases. Note: ShedLock is already correctly pinned to `6.0.2`; this pattern is consistent with that.
+
+**Trivy scan scope (extend existing CI scan):** Extend the Trivy scan added in SA-1 to cover JARs in the build output via SBOM scanning:
+
+```bash
+trivy fs --scanners vuln --format sarif --output trivy-results.sarif .
+```
+
+This detects CVEs in all installed JARs, not just the Docker image OS packages.
+
+---
+
+**Worker Dockerfile — dependency pinning:**
+
+Pin all native library versions to exact apt versions at implementation time. Do not use unpinned `apt-get install` — non-reproducible builds cannot be audited for CVEs.
+
+```dockerfile
+# Pin FROM image to specific digest for reproducible builds
+FROM debian:bookworm-slim@sha256:<digest-at-implementation-time>
+
+# Verify versions against security tracker before pinning
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libraw-dev=X.Y.Z \
+    libvips-tools=X.Y.Z \
+    libimage-exiftool-perl=X.Y.Z \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+**ExifTool version requirement:** `libimage-exiftool-perl` **must be ≥ 12.24**. CVE-2021-22204 (ExifTool ≤ 12.23) is a confirmed RCE exploitable via a crafted DjVu file with malicious metadata — it is listed in the CISA Known Exploited Vulnerabilities catalogue. An authenticated user uploading a crafted file can achieve arbitrary code execution in the worker container. Debian 12 (Bookworm) ships 12.57+; verify the available apt version satisfies ≥ 12.24 before pinning.
+
+**CI scan:** Add a Trivy scan of the built worker Docker image to CI. The scan must fail the build on any CVE ≥ HIGH in installed packages. This guards against ExifTool, libraw, and libvips CVEs being silently introduced by future image rebuilds.
 
 **Step 1: Write failing tests**
 
@@ -444,6 +739,39 @@ void metadataExtractor_extractsExifData() {
 void metadataExtractor_upsertSucceedsOnReprocessing() {
     // assert no exception when photo_metadata row already exists; row is updated not duplicated
 }
+
+@Test
+void metadataExtractor_stripsHtmlTagsFromIptcCaption() {
+    // assert caption stored in DB contains no HTML tags when IPTC contains injected markup
+}
+
+@Test
+void metadataExtractor_stripsHtmlTagsFromIptcTitle() {
+    // assert title stored in DB contains no HTML tags when IPTC contains injected markup
+}
+
+@Test
+void metadataExtractor_stripsHtmlTagsFromIptcDescription() {
+    // assert description stored in DB contains no HTML tags when IPTC contains injected markup
+}
+
+@Test
+void metadataExtractor_stripsHtmlTagsFromExifUserComment() {
+    // assert exif_data.UserComment stored in DB contains no HTML tags (e.g. "<script>" → stripped)
+    // when EXIF UserComment field contains injected markup (SA2-F1)
+}
+
+@Test
+void metadataExtractor_capturesExifToolOutputForLargeExifPhoto() {
+    // assert photo fixture with 100 KB XMP block produces correct metadata (not timeout/FAILED)
+    // verifies ExifTool stdout is consumed via redirect-to-file before waitFor() (SA2-F2)
+}
+
+@Test
+void metadataExtractor_handlesNullExifValues() {
+    // assert that a raw EXIF map containing a null-valued entry is sanitized without NPE;
+    // null values pass through as null in sanitizedExifData
+}
 ```
 
 **Step 2: Implement TikaValidator**
@@ -455,7 +783,7 @@ Apache Tika content-type check. Reject non-image files before any processing.
 - Download original from MinIO to tmpfs (`/tmp` — see docker-compose tmpfs note below)
 - **Temp file cleanup:** Wrap the file lifecycle in try-finally to guarantee cleanup on both success and failure paths:
   ```java
-  Path tmp = Files.createTempFile("/tmp", photoId.toString(), "." + ext);
+  Path tmp = Files.createTempFile(Path.of("/tmp"), photoId.toString(), "." + ext);
   try {
       // download, process
   } finally {
@@ -471,15 +799,79 @@ Apache Tika content-type check. Reject non-image files before any processing.
 - **tmpfs sizing (docker-compose.yml):** The worker service must declare:
   ```yaml
   tmpfs:
-    - /tmp:size=1g,mode=1777
+    - /tmp:size=${WORKER_TMPFS_SIZE:-1g},mode=1777
   ```
-  Rationale: single-threaded consumer; 1 job × 120 MB RAW = 120 MB needed; 1 GB provides ample headroom for concurrent temp file accumulation during processing.
+  Rationale: single-threaded consumer; 1 job × 120 MB RAW = 120 MB needed; 1 GB provides ample headroom for concurrent temp file accumulation during processing. The `${WORKER_TMPFS_SIZE:-1g}` variable is defined in `.env.example` (see Task 3.2 Step 4) — operators tune this without modifying `docker-compose.yml`.
+
+  **Note:** Update `docs/plans/2026-02-24-saas-conversion-design.md` Section 7 worker service tmpfs from `- /tmp:size=512M` to `- /tmp:size=${WORKER_TMPFS_SIZE:-1g},mode=1777`. The design doc is the deployment source of truth and must stay consistent with the plan.
 
 **Step 4: Implement MetadataExtractor**
 
 - `metadata-extractor` (Java) as primary
-- ExifTool `-fast2` as fallback via ProcessBuilder (same timeout policy as above)
-- Write extracted EXIF/IPTC/XMP to `photo_metadata` table as JSONB using **upsert**:
+- ExifTool `-fast2` as fallback via ProcessBuilder — **stdout must be consumed before `waitFor()` to prevent pipe buffer exhaustion (SA2-F2).** Use redirect-to-temp-file (Option A — simpler than async threading, no extra thread required):
+
+  ```java
+  File outputFile = File.createTempFile("exiftool-", ".json", new File("/tmp"));
+  try {
+      ProcessBuilder pb = new ProcessBuilder(
+          "exiftool", "-fast2", "-json", tmpFile.toString());
+      pb.redirectOutput(outputFile);
+      pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+      Process process = pb.start();
+      boolean completed = process.waitFor(
+          workerProperties.getProcess().getTimeoutMinutes(), TimeUnit.MINUTES);
+      if (!completed) {
+          process.destroyForcibly();
+          throw new ProcessTimeoutException("ExifTool timed out for photo " + photoId);
+      }
+      String json = Files.readString(outputFile.toPath());
+      // parse json → extract metadata fields
+  } finally {
+      try {
+          Files.deleteIfExists(outputFile.toPath());
+      } catch (IOException e) {
+          log.error("Failed to delete ExifTool temp file: {}", outputFile, e);
+      }
+  }
+  ```
+
+  **Why explicit `/tmp` directory:** `File.createTempFile(prefix, suffix)` uses `java.io.tmpdir`, which is not guaranteed to be the tmpfs mount if overridden. The three-argument form `File.createTempFile(prefix, suffix, new File("/tmp"))` is explicit, consistent with the `Path.of("/tmp")` pattern used in `ThumbnailGenerator`.
+
+  **Why `Files.deleteIfExists()` over `File.delete()`:** `File.delete()` returns `false` silently on failure. `Files.deleteIfExists()` throws a checked `IOException` that we catch and log at ERROR, surfacing filesystem issues (permissions, stale handles) that would otherwise be invisible.
+
+  **Why redirect-to-file:** Linux's default pipe buffer is 64 KB. ExifTool writes its JSON output to stdout. For photos with large XMP blocks or extensive RAW GPS data, output can reach 100–300 KB. Without consuming stdout before `waitFor()`, ExifTool blocks on the pipe write and `waitFor()` times out after 5 minutes — producing a permanent `FAILED` status with no meaningful error. Redirect-to-file (`pb.redirectOutput(outputFile)`) drains stdout into a file so ExifTool never blocks. libvips and libraw write to explicit output files (not stdout) and do not have this issue.
+- **Sanitize ALL EXIF/IPTC/XMP text fields before DB write (SA2-F1).** Apply `Jsoup.parse(v).text()` to every string-typed value in the raw EXIF map before assembling the JSONB payload, in addition to the per-field sanitization of `caption`, `title`, and `description`:
+
+  ```java
+  // Step 1: sanitize all string values in the raw EXIF map before JSONB assembly.
+  // HashMap.put() accepts null values; Collectors.toMap() calls HashMap.merge() which
+  // calls Objects.requireNonNull(value) — NPE on any null-valued EXIF tag.
+  Map<String, Object> sanitizedExifData = new HashMap<>();
+  rawExifData.forEach((k, v) ->
+      sanitizedExifData.put(k, v instanceof String s ? Jsoup.parse(s).text() : v));
+
+  // Step 2: extract and sanitize the three named fields for the photos table.
+  // sanitize() guards against null — Jsoup.parse(null) throws NPE; these fields
+  // are absent from most photos.
+  String safeCaption = sanitize(rawCaption);
+  String safeTitle   = sanitize(rawTitle);
+  String safeDesc    = sanitize(rawDescription);
+  ```
+
+  Define `sanitize()` as a private helper in `MetadataExtractor`:
+  ```java
+  private String sanitize(String s) {
+      return s != null ? Jsoup.parse(s).text() : null;
+  }
+  ```
+
+  **Why sanitize the full JSONB map:** The three named fields (`caption`, `title`, `description`) are rendered in prominent UI locations — they were sanitized first. However, `photo_metadata.exif_data` stores the complete EXIF/IPTC/XMP dataset, including string fields such as `UserComment`, `ImageDescription`, `Artist`, `Copyright`, `XMP:Description`, `XMP:Rights`, `IPTC:Keywords`, and `GPS:GPSAreaInformation`. Phase 4 renders these fields in the metadata panel. Sanitizing at write time (Phase 3) is strictly cheaper than auditing every UI component that renders EXIF data (Phase 4).
+
+  **Do not use `Jsoup.clean(rawValue, Safelist.none())`** — that method HTML-encodes entities, so `&` becomes `&amp;` in the stored value, corrupting legitimate metadata. `.text()` returns decoded plain text.
+
+  **Phase 4 note:** See Phase 4 Task 4.6 for the safe EXIF rendering requirement — all `exif_data` JSONB fields must be rendered via React text nodes only; never `dangerouslySetInnerHTML`.
+
+- Write extracted EXIF/IPTC/XMP to `photo_metadata` table as JSONB using **upsert** (using `sanitizedExifData`):
   ```sql
   INSERT INTO photo_metadata (photo_id, exif_data, extracted_at)
   VALUES (?, ?, now())
@@ -488,7 +880,7 @@ Apache Tika content-type check. Reject non-image files before any processing.
       extracted_at = EXCLUDED.extracted_at;
   ```
   This ensures re-processed photos (after a failed first run) overwrite partial metadata without PK violations.
-- Populate `caption`, `title`, `description` on `photos` from IPTC/XMP
+- Populate `caption`, `title`, `description` on `photos` from IPTC/XMP (sanitized values only)
 
 **Step 5: Wire into ImageProcessor pipeline**
 
@@ -505,7 +897,7 @@ ExifTool fallback → if metadata-extractor yields insufficient data
 update DB
 ```
 
-Define the complete set of RAW MIME types that trigger the libraw path at implementation time (check Tika's MediaType registry for the full list).
+Define the complete set of RAW MIME types that trigger the libraw path at implementation time (check Tika's MediaType registry for the full list). Keep this list consistent with the MIME-to-extension allowlist defined in Task 3.2.
 
 **Retry reprocessing:** Pipeline steps are not individually idempotent-guarded. On retry, all steps re-execute. MinIO PUT overwrites are idempotent; DB upsert on `photo_metadata` is idempotent. Full reprocessing on retry is accepted behavior for Phase 3.
 
@@ -555,7 +947,13 @@ void trashPurge_doesNotRunConcurrentlyAcrossInstances() {
 
 @Test
 void orphanReconciliation_detectsOrphanedMinioObjects() {
-    // assert MinIO objects without a matching storage_key in DB are enqueued for deletion
+    // assert MinIO objects with no matching photos row are enqueued for deletion
+}
+
+@Test
+void orphanReconciliation_doesNotDeleteObjectWherePhotoRowExists() {
+    // assert MinIO object is not enqueued for deletion when a photos row exists for its photo_id,
+    // regardless of storage_key or deleted_at state (covers in-progress uploads, active, soft-deleted)
 }
 
 @Test
@@ -580,18 +978,43 @@ void unverifiedPurge_enqueuesMinioDeletesBeforeDeletingDbRecords() {
 - `@SchedulerLock(name = "trashPurge", lockAtMostFor = "PT10M", lockAtLeastFor = "PT1M")`
 - Retention window from `@Value("${jpt.trash.retention-days:30}")` in `api/src/main/resources/application.yml` — per-user configurability is out of scope for Phase 3
 - Delete photos where `deleted_at < now() - (retentionDays || ' days')::interval`
-- **Page through purged photos in batches of 500** to avoid loading all into heap (OOM risk for large trash windows):
+- **Page through purged photos in batches of 500** to avoid loading all into heap (OOM risk for large trash windows). Always query page 0 — advancing the offset after deleting rows causes offset-skipping (after deleting rows 0–499, OFFSET 500 skips what are now rows 0–499):
   ```java
-  Pageable page = PageRequest.of(0, 500);
-  Slice<Photo> slice;
+  Pageable page = PageRequest.of(0, 500);   // always page 0
+  List<Photo> batch;
   do {
-      slice = photoRepo.findPurgeableBatch(cutoff, page);
-      enqueueDeleteJobsBatch(slice.getContent()); // Lettuce pipeline per batch
-      deletePhotosBatch(slice.getContent());
-      page = slice.nextPageable();
-  } while (slice.hasNext());
+      batch = photoRepo.findPurgeableBatch(cutoff, page);
+      if (batch.isEmpty()) break;
+      enqueueDeleteJobsBatch(batch); // Lettuce pipeline per batch
+      deletePhotosBatch(batch);
+      // do NOT advance page — deleted rows are gone; next query of page 0 returns next 500
+  } while (!batch.isEmpty());
   ```
-- **Null `storage_key` cleanup (compensating-Tx recovery):** Also query for photo rows where `storage_key IS NULL AND created_at < now() - INTERVAL '1 hour'` — these are upload compensating-Tx failures where the DB rollback itself failed. For each: enqueue delete-job (no-op if no MinIO object exists), delete the DB row, decrement `used_bytes`.
+  Repository method returns `List<Photo>` (not `Slice<Photo>`) with `LIMIT 500`. The loop terminates when a batch is empty.
+
+  **Note:** At implementation time, verify `UnverifiedAccountPurgeScheduler` does not use the same advancing-offset pattern if it paginates photo or user batches.
+- **Null `storage_key` cleanup (compensating-Tx recovery):** Also query for photo rows where `storage_key IS NULL AND deleted_at IS NULL AND created_at < now() - INTERVAL '1 hour'` — these are upload compensating-Tx failures where the DB rollback itself failed.
+
+  For each batch:
+  1. **(No delete-job enqueue — SA2-F5.)** `storage_key` is unknown for these rows (the upload failed before MinIO completed or before Tx 2 committed). Any MinIO objects that do exist for these uploads are true orphans and are handled by `OrphanReconciliationScheduler` on its scheduled run. Enqueueing a delete-job with null/empty object keys would cause `DeleteJobConsumer` to crash or dead-letter on every retry.
+  2. Execute a single SQL CTE that atomically deletes the rows and decrements `used_bytes`:
+     ```sql
+     WITH deleted AS (
+         DELETE FROM photos
+         WHERE storage_key IS NULL
+         AND deleted_at IS NULL
+         AND created_at < now() - INTERVAL '1 hour'
+         RETURNING user_id, COALESCE(file_size, 0) AS file_size
+     )
+     UPDATE users u
+     SET used_bytes = GREATEST(0, u.used_bytes - d.file_size)
+     FROM deleted d
+     WHERE u.id = d.user_id;
+     ```
+  `GREATEST(0, ...)` prevents negative `used_bytes` if `file_size` is inconsistent. The CTE is the correct approach — a `@Transactional` wrapper on a method called from within the same class is silently ignored by Spring's proxy-based AOP (self-invocation bypasses the proxy). The CTE guarantees atomicity at the database level with no Spring proxy dependency.
+
+  **`file_size` note:** `file_size` is populated in Tx 1 of the upload (before MinIO upload) because quota validation requires it. Use `COALESCE(file_size, 0)` as a safe fallback for any rows where it is unexpectedly null.
+
 - Cascade deletes `photo_keywords`, `album_photos`, `shares`
 
 **Step 3: Implement OrphanReconciliationScheduler**
@@ -601,8 +1024,25 @@ void unverifiedPurge_enqueuesMinioDeletesBeforeDeletingDbRecords() {
 - **To avoid OOM, stream all sides:**
   - User IDs: `SELECT id FROM users` returning `Stream<UUID>`, `@Transactional(readOnly = true)`, consumed inside a try-with-resources block
   - MinIO side: for each user ID, iterate by prefix (`{user_id}/`) using paginated `listObjects` — never load all objects at once
-  - DB side: `@Query("SELECT storage_key FROM photos WHERE user_id = :userId AND deleted_at IS NULL")` returning `Stream<String>`, `@Transactional(readOnly = true)`, try-with-resources
-- Enqueue unreferenced MinIO objects for deletion
+
+- **Orphan identification — photo_id existence check (not storage_key comparison):**
+
+  For each MinIO object key under `{user_id}/`:
+  1. **Skip non-originals paths immediately:** if the key does not start with `{user_id}/originals/`, skip it and continue. Thumbnail paths (`{user_id}/thumbnails/{photo_id}_sm.jpg`) contain `{photo_id}_sm` which is not a valid UUID — attempting to parse them throws an exception and produces log noise on every reconciliation run.
+  2. Parse `photo_id` from the key (the UUID is embedded between the last `/` and the `.{ext}`)
+  3. Execute: `SELECT EXISTS(SELECT 1 FROM photos WHERE id = :photo_id)`
+  4. If EXISTS → **skip** — a DB row owns this object regardless of its state (in-progress, active, soft-deleted). The normal deletion pipeline handles soft-deleted objects via delete-jobs.
+  5. If NOT EXISTS → true orphan → construct all keys from `photo_id` and enqueue delete-job with all four fields:
+     ```
+     original_key = "{user_id}/originals/{photo_id}.{ext}"   // parsed from the MinIO key
+     thumbnail_sm = "{user_id}/thumbnails/{photo_id}_sm.jpg"  // derived deterministically
+     thumbnail_md = "{user_id}/thumbnails/{photo_id}_md.jpg"  // derived deterministically
+     ```
+     Thumbnail keys may not exist in MinIO (if the worker crashed before generating them) — `DeleteJobConsumer` handles missing keys gracefully via the MinIO SDK's no-op on non-existent object deletion.
+
+  **Why this eliminates the TOCTOU race:** The upload transaction order guarantees a DB row is inserted (Tx 1) before any MinIO object is created. Therefore, any MinIO object that exists must have a corresponding DB row — unless the upload failed before Tx 1 committed (the only true orphan case). There is no timing window: checking row existence by `photo_id` (embedded in the key by design) exploits the plan's own structural invariant.
+
+  **Why the previous storage_key approach was wrong:** Querying `SELECT storage_key FROM photos WHERE user_id = :userId AND deleted_at IS NULL` returns NULL for in-progress uploads (Tx 1 committed, Tx 2 not yet). A NULL storage_key never matches a MinIO object key, so the object appears unreferenced and gets incorrectly enqueued for deletion during the upload window (up to 30 seconds for large RAW files on slow connections).
 
 **Step 4: Implement UnverifiedAccountPurgeScheduler**
 
