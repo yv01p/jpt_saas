@@ -2,6 +2,7 @@ package org.jphototagger.api.security;
 
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.BucketConfiguration;
+import io.github.bucket4j.ConsumptionProbe;
 import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy;
 import io.github.bucket4j.distributed.proxy.ProxyManager;
 import io.github.bucket4j.redis.lettuce.Bucket4jLettuce;
@@ -83,13 +84,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 ? this::uploadBucketConfig
                 : this::generalBucketConfig;
 
-        boolean allowed = proxyManager.builder()
+        ConsumptionProbe probe = proxyManager.builder()
                 .build(bucketKey, configSupplier)
-                .tryConsume(1);
+                .tryConsumeAndReturnRemaining(1);
 
-        if (!allowed) {
+        if (!probe.isConsumed()) {
+            long retryAfterSeconds = Math.max(1,
+                    (probe.getNanosToWaitForRefill() + 999_999_999) / 1_000_000_000);
             response.setContentType("application/json");
             response.setStatus(429);
+            response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));
             response.getWriter().write("{\"error\":\"Too Many Requests\",\"status\":429}");
             return;
         }
@@ -100,7 +104,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private boolean isUploadRequest(HttpServletRequest request) {
         String method = request.getMethod();
         String path = request.getRequestURI();
-        return ("POST".equals(method) || "PUT".equals(method)) && path.contains("/photos");
+        return "POST".equals(method) && path.matches(".*/photos/?$");
     }
 
     private BucketConfiguration uploadBucketConfig() {

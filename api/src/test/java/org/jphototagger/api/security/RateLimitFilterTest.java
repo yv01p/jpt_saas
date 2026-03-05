@@ -21,6 +21,7 @@ import java.util.UUID;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -70,29 +71,19 @@ class RateLimitFilterTest {
         UUID userId = createUser("upload-rl-" + UUID.randomUUID() + "@test.com");
         Cookie jwt = jwtCookie(userId);
 
-        // First 3 upload requests succeed (POST to /photos/{id}/restore as an upload-like endpoint)
+        // First 3 upload requests pass the rate limiter (POST to /photos — the upload endpoint)
         for (int i = 0; i < 3; i++) {
-            UUID photoId = UUID.randomUUID();
-            jdbcTemplate.update(
-                    "INSERT INTO photos (id, user_id, filename, size_bytes, processing_status, deleted_at) "
-                            + "VALUES (?, ?, ?, ?, ?, NOW())",
-                    photoId, userId, "upload" + i + ".jpg", 1000, "done");
-            mockMvc.perform(post("/photos/" + photoId + "/restore")
+            mockMvc.perform(post("/photos")
                             .with(csrf())
-                            .cookie(jwt))
-                    .andExpect(status().isOk());
+                            .cookie(jwt));
         }
 
         // 4th upload request should be rate limited
-        UUID photoId = UUID.randomUUID();
-        jdbcTemplate.update(
-                "INSERT INTO photos (id, user_id, filename, size_bytes, processing_status, deleted_at) "
-                        + "VALUES (?, ?, ?, ?, ?, NOW())",
-                photoId, userId, "upload3.jpg", 1000, "done");
-        mockMvc.perform(post("/photos/" + photoId + "/restore")
+        mockMvc.perform(post("/photos")
                         .with(csrf())
                         .cookie(jwt))
                 .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.error").value("Too Many Requests"));
     }
 
@@ -115,6 +106,7 @@ class RateLimitFilterTest {
                         .param("page", "0").param("size", "1")
                         .cookie(jwt))
                 .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.error").value("Too Many Requests"));
     }
 }
