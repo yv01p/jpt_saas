@@ -16,6 +16,30 @@
 
 ## Changelog
 
+### v3.0 — 2026-03-04
+Revised following second critical implementation review (see `docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-2.md`). All five critical issues and all twelve minor issues addressed. One clarification question resolved.
+
+| ID | Change |
+|----|--------|
+| CI-1 | Dual-client MinIO approach: `minioInternalClient` for I/O, `minioPublicClient` for pre-signed URL generation only |
+| CI-2 | Added periodic null-`storage_key` cleanup in `TrashPurgeScheduler`; critical-severity log on compensating Tx failure |
+| CI-3 | Startup recovery lock TTL increased to 5 min; page-refresh pattern (TTL extended after each batch) |
+| CI-4 | PEL check before re-enqueueing during startup recovery; skip photos already in PEL |
+| CI-5 | Delivery count requires separate `XPENDING {id} {id} 1` call; retry logic updated accordingly |
+| MI-1 | Temp file lifecycle wrapped in try-finally with `Files.deleteIfExists` |
+| MI-2 | `jpt.trash.retention-days` moved to `api/src/main/resources/application.yml`; removed from worker config |
+| MI-3 | Consumer hostname uses `HOSTNAME` env var with `InetAddress` fallback and `UUID` last resort |
+| MI-4 | `photo-jobs` message schema defined: `photo_id` only; consumer fetches remaining fields from DB |
+| MI-5 | Task 3.2 references `spring.servlet.multipart.max-file-size=200MB` per design doc [M4]; HTTP 413 on exceed |
+| MI-6 | Quota exceeded changed from HTTP 403 to HTTP 402 Payment Required |
+| MI-7 | ShedLock pinned to exact version; note to check Maven Central at implementation time |
+| MI-8 | `TrashPurgeScheduler` pages through purged photos in batches of 500; pipeline per batch |
+| MI-9 | `OrphanReconciliationScheduler` streams user IDs from DB via read-only cursor query |
+| MI-10 | libraw step documented as conditional on RAW MIME types with branching logic |
+| MI-11 | Full pipeline reprocessing on retry documented as accepted behavior for Phase 3 |
+| MI-12 | `ProcessingException` and `ProcessTimeoutException` defined in worker module |
+| CQ-3 | Worker consumer is single-threaded per container instance; scale horizontally |
+
 ### v2.0 — 2026-03-04
 Revised following critical implementation review (see `docs/plans/2026-02-25-saas-conversion-phase-3-critical-review-1.md`). All five critical issues and all fifteen minor issues addressed.
 
@@ -72,20 +96,28 @@ void generatePresignedUrl_returnsOriginalUrlWith1HourExpiry() {
 void generatePresignedUrl_urlBeginsWithConfiguredPublicUrl() {
     // assert returned URL begins with the value of minio.public-url, not the internal hostname
 }
+
+@Test
+void minioPublicClient_isNeverUsedForUploadOrDownload() {
+    // assert minioPublicClient is not invoked during upload, download, or delete operations
+}
 ```
 
-**Step 2: Implement MinioConfig**
+**Step 2: Implement MinioConfig — dual-client approach**
 
-- Expose two properties:
-  - `minio.url` — internal Docker hostname (e.g., `http://minio:9000`), used for server-to-server object upload/download
-  - `minio.public-url` — Nginx-proxied public URL (e.g., `https://example.com`), used when generating pre-signed URLs returned to browsers
-- Initialize `MinioClient` with `minio.url` for I/O operations
-- `StorageService` substitutes `minio.public-url` into `GetPresignedObjectUrlArgs` before returning URLs to callers — never the internal endpoint
+The MinIO Java SDK's `GetPresignedObjectUrlArgs` does not accept a base URL override — it generates URLs against the endpoint the `MinioClient` was constructed with. The correct solution is two `MinioClient` instances:
+
+- `minioInternalClient` — configured with `minio.url` (internal Docker hostname, e.g., `http://minio:9000`). Used for all I/O: upload, download, delete.
+- `minioPublicClient` — configured with `minio.public-url` (Nginx-proxied public URL, e.g., `https://example.com`). Used **only** for pre-signed URL generation. Never used for I/O.
+
+Expose two properties:
+- `minio.url` — internal Docker hostname
+- `minio.public-url` — public-facing URL returned to browsers
 
 **Step 3: Implement StorageService**
 
-- Upload object to MinIO (streaming, no heap buffering)
-- Generate pre-signed URLs — substitute `minio.public-url` as base (15 min thumbnails, 1 hour originals)
+- Upload/download/delete via `minioInternalClient` only
+- Generate pre-signed URLs via `minioPublicClient` only (15 min thumbnails, 1 hour originals)
 - Delete objects
 - Bucket path layout: `{user_id}/originals/{photo_id}.{ext}`, `{user_id}/thumbnails/{photo_id}_sm.jpg`, `{user_id}/thumbnails/{photo_id}_md.jpg`
 
@@ -150,7 +182,7 @@ void upload_rejectsDuplicateContentHash() {
 
 @Test
 void upload_rejectsWhenQuotaExceeded() {
-    // assert HTTP 403 when used_bytes + file_size > quota_bytes
+    // assert HTTP 402 when used_bytes + file_size > quota_bytes
 }
 
 @Test
@@ -182,13 +214,15 @@ void upload_minioFailureRollsBackQuotaAndPhotoRow() {
 **Step 4: Implement upload endpoint**
 
 - `POST /photos/upload` — multipart upload
+- **Max upload size:** Confirm `spring.servlet.multipart.max-file-size=200MB` is set in `api/src/main/resources/application.yml` per design doc [M4]. Return HTTP 413 with a user-readable message when exceeded.
 - **Email verification gate:** Reject uploads from users where `email_verified = false` with `403 Forbidden` and message "Email verification required before uploading" (design doc v4.0, [CR#5]).
+- **Quota exceeded:** Return HTTP 402 Payment Required when `used_bytes + file_size > quota_bytes`.
 - **Transaction order — keep the row lock as narrow as possible:**
   1. *(No transaction)* Stream request body; compute SHA-256 hash
   2. *(No transaction)* Fast-path dedup check — `SELECT` by `(user_id, content_hash) WHERE deleted_at IS NULL` (read-only, no lock)
   3. **Tx 1 (milliseconds):** `SELECT FOR UPDATE` on user row → validate quota → `INSERT INTO photos` (`processing_status = PENDING`, no `storage_key` yet) → increment `used_bytes` → **commit**
   4. *(No transaction)* Upload to MinIO
-  5. **On MinIO failure:** compensating Tx — delete the photo row, decrement `used_bytes`, return 500
+  5. **On MinIO failure:** compensating Tx — delete the photo row, decrement `used_bytes`, return 500. If the compensating Tx itself fails: log at CRITICAL severity (never silent); the `storage_key IS NULL` cleanup in `TrashPurgeScheduler` will recover the quota drift on its next run.
   6. **Tx 2 (milliseconds):** `UPDATE photos SET storage_key = ?, processing_status = PENDING WHERE id = ?` → **commit**
   7. *(No transaction)* Enqueue `photo-jobs` to Redis Streams
 - DB-level dedup: catch `UniqueConstraintViolationException` → 409
@@ -221,12 +255,13 @@ worker:
   streams:
     claim-idle-time-ms: 1800000   # 30 minutes — must exceed worst-case RAW processing time
     max-retries: 3                 # Dead-letter after this many delivery attempts
-jpt:
-  trash:
-    retention-days: 30
+  process:
+    timeout-minutes: 5             # Per-tool ProcessBuilder timeout
 ```
 
 Also configure restricted DB user and HikariCP pool size 5.
+
+**Note:** `jpt.trash.retention-days: 30` belongs in `api/src/main/resources/application.yml` — `TrashPurgeScheduler` lives in the API module and will not read the worker's config. Do not add it to the worker's YAML.
 
 **Step 4: Run tests, verify pass**
 
@@ -244,11 +279,29 @@ git commit -m "feat: worker Spring Boot scaffold"
 - Create: `worker/src/main/java/org/jphototagger/worker/consumer/PhotoJobConsumer.java`
 - Create: `worker/src/main/java/org/jphototagger/worker/consumer/DeleteJobConsumer.java`
 
+**Consumer thread model:** Each consumer instance is single-threaded — one in-flight job at a time. Scale concurrency by running additional worker container instances, not by adding threads per instance. This keeps tmpfs sizing, DB pool usage, and XAUTOCLAIM idle-time reasoning simple and correct.
+
 **Consumer group and consumer name:**
 - `photo-jobs` stream group: `photo-processors`
 - `delete-jobs` stream group: `delete-processors`
-- Consumer name: `InetAddress.getLocalHost().getHostName() + "-" + ProcessHandle.current().pid()` — stable across restarts, unique per instance, logged at startup
+- Consumer name construction — prefer `HOSTNAME` env var (set by Docker to container ID), fall back to `InetAddress`, last resort random UUID:
+  ```java
+  String hostname = Optional.ofNullable(System.getenv("HOSTNAME"))
+      .filter(s -> !s.isBlank())
+      .orElseGet(() -> {
+          try { return InetAddress.getLocalHost().getHostName(); }
+          catch (UnknownHostException e) { return UUID.randomUUID().toString(); }
+      });
+  String consumerName = hostname + "-" + ProcessHandle.current().pid();
+  ```
+- Consumer name logged at startup
 - Groups created with `XGROUP CREATE ... MKSTREAM` on startup if they don't exist
+
+**`photo-jobs` stream message schema:**
+```
+photo_id  — UUID string of the photo to process
+```
+The consumer fetches `user_id`, `storage_key`, and file extension from DB using `photo_id`. No additional fields in the message.
 
 **`delete-jobs` stream message schema:**
 ```
@@ -311,7 +364,14 @@ void consumer_usesStableConsumerNameAcrossRestarts() {
 - Call processing pipeline (Task 3.5)
 - Update status to `DONE` or `FAILED`
 - `XACK` on success
-- **Retry / dead-letter policy:** On failure, check the message delivery count from `XPENDING`. If `deliveryCount >= MAX_RETRIES` (default 3, from `worker.streams.max-retries`): set `processing_status = FAILED` in DB, XACK the message (removes from PEL), optionally XADD to `dead-letter` stream for inspection. If under the retry limit, leave unacknowledged — XAUTOCLAIM will retry after the idle window.
+- **Retry / dead-letter policy:** The delivery count is **not** included in the `XREADGROUP` response (`MapRecord<String, Object, Object>`). On failure, retrieve it with a separate call:
+  ```
+  XPENDING photo-jobs photo-processors {messageId} {messageId} 1
+  ```
+  Then branch:
+  - If `deliveryCount >= MAX_RETRIES` (from `worker.streams.max-retries`): set `processing_status = FAILED` in DB → `XACK` (removes from PEL) → optionally `XADD` to `dead-letter` stream for inspection
+  - If under the retry limit: leave unacknowledged — XAUTOCLAIM will retry after the idle window
+  - Note: XPENDING counts cumulative deliveries across all consumers in the group — correct semantic for cross-instance retry tracking
 
 **Step 3: Implement DeleteJobConsumer**
 
@@ -327,10 +387,12 @@ void consumer_usesStableConsumerNameAcrossRestarts() {
 
 **Step 5: Implement startup re-enqueue recovery**
 
-- **Acquire distributed lock first:** `SET worker:startup-recovery-lock {instanceId} NX PX 60000`
+- **Acquire distributed lock first:** `SET worker:startup-recovery-lock {instanceId} NX PX 300000` (5 minute TTL)
 - Only the instance that acquires the lock performs the recovery scan
 - Instances that do not acquire the lock skip recovery and log accordingly
-- Lock holder: query all `pending`/`processing` rows where `deleted_at IS NULL`, re-enqueue to Redis Streams
+- **Lock-refresh (page-refresh pattern):** Scan in batches; after processing each page, extend the lock TTL by another 5 minutes (`SET worker:startup-recovery-lock {instanceId} XX PX 300000`). This handles arbitrarily large recovery scans without an unbounded TTL.
+- **Idempotency — PEL check before re-enqueue:** Before re-enqueueing a `photo_id`, call `XPENDING photo-jobs photo-processors - + COUNT 100` to get the current Pending Entry List. Re-enqueue only photos whose `photo_id` is absent from the PEL. This prevents duplicate stream entries across restart cycles (which would reset the delivery counter and cause failed jobs to loop indefinitely).
+- Lock holder: page through `pending`/`processing` rows where `deleted_at IS NULL`; for each batch, PEL-check then re-enqueue missing entries
 
 **Step 6: Run tests, verify pass**
 
@@ -391,18 +453,27 @@ Apache Tika content-type check. Reject non-image files before any processing.
 **Step 3: Implement ThumbnailGenerator**
 
 - Download original from MinIO to tmpfs (`/tmp` — see docker-compose tmpfs note below)
+- **Temp file cleanup:** Wrap the file lifecycle in try-finally to guarantee cleanup on both success and failure paths:
+  ```java
+  Path tmp = Files.createTempFile("/tmp", photoId.toString(), "." + ext);
+  try {
+      // download, process
+  } finally {
+      Files.deleteIfExists(tmp);
+  }
+  ```
 - For RAW: `libraw` CLI via ProcessBuilder (extract embedded JPEG)
 - `libvips` CLI via ProcessBuilder (resize to sm/md thumbnails)
 - Upload thumbnails to MinIO
 - All CLI calls use explicit argument arrays — never shell strings
 - Files referenced by UUID storage keys only
-- **ProcessBuilder timeout:** All tool invocations use `process.waitFor(5, TimeUnit.MINUTES)`. On timeout: call `process.destroyForcibly()`, throw `ProcessTimeoutException`. The exception propagates to `PhotoJobConsumer` which applies the retry/dead-letter policy (MI-4). Per-tool timeout is configurable (e.g., `worker.process.timeout-minutes: 5`).
+- **ProcessBuilder timeout:** All tool invocations use `process.waitFor(5, TimeUnit.MINUTES)`. On timeout: call `process.destroyForcibly()`, throw `ProcessTimeoutException`. The exception propagates to `PhotoJobConsumer` which applies the retry/dead-letter policy. Per-tool timeout is configurable via `worker.process.timeout-minutes: 5`.
 - **tmpfs sizing (docker-compose.yml):** The worker service must declare:
   ```yaml
   tmpfs:
     - /tmp:size=1g,mode=1777
   ```
-  Rationale: up to 5 concurrent workers (HikariCP pool 5) × 120 MB RAW = ~600 MB peak; 1 GB provides adequate headroom.
+  Rationale: single-threaded consumer; 1 job × 120 MB RAW = 120 MB needed; 1 GB provides ample headroom for concurrent temp file accumulation during processing.
 
 **Step 4: Implement MetadataExtractor**
 
@@ -421,7 +492,22 @@ Apache Tika content-type check. Reject non-image files before any processing.
 
 **Step 5: Wire into ImageProcessor pipeline**
 
-Orchestrate: Tika → libraw → libvips → metadata-extractor → ExifTool fallback → update DB
+Define `ProcessingException` (unchecked) as the base failure signal in the worker module. `ProcessTimeoutException` extends it. `PhotoJobConsumer` catches `ProcessingException` as the trigger for the retry/dead-letter policy.
+
+Branching pipeline logic:
+```
+Tika → validate MIME type
+if (mimeType is RAW format — e.g., image/x-canon-cr2, image/x-nikon-nef, image/x-sony-arw, image/x-adobe-dng):
+    libraw → extract embedded JPEG
+libvips → resize to sm/md thumbnails
+metadata-extractor → extract EXIF/IPTC/XMP
+ExifTool fallback → if metadata-extractor yields insufficient data
+update DB
+```
+
+Define the complete set of RAW MIME types that trigger the libraw path at implementation time (check Tika's MediaType registry for the full list).
+
+**Retry reprocessing:** Pipeline steps are not individually idempotent-guarded. On retry, all steps re-execute. MinIO PUT overwrites are idempotent; DB upsert on `photo_metadata` is idempotent. Full reprocessing on retry is accepted behavior for Phase 3.
 
 **Step 6: Run tests, verify pass**
 
@@ -442,9 +528,11 @@ git commit -m "feat: worker image processing pipeline — Tika, libraw, libvips,
 
 **ShedLock dependency (add to `api/build.gradle`):**
 ```groovy
-implementation 'net.javacrumbs.shedlock:shedlock-spring:6.x'
-implementation 'net.javacrumbs.shedlock:shedlock-provider-redis-spring:6.x'
+implementation 'net.javacrumbs.shedlock:shedlock-spring:6.0.2'
+implementation 'net.javacrumbs.shedlock:shedlock-provider-redis-spring:6.0.2'
 ```
+Pin to an exact version. Check Maven Central for the current stable `6.x` release at implementation time and update accordingly. Do not use wildcard versions (`6.x`) — builds must be reproducible.
+
 All three schedulers are annotated with `@SchedulerLock` to prevent concurrent execution across API instances (rolling deploys, horizontal scale). This is the primary guard against duplicate purge operations.
 
 **Step 1: Write failing tests**
@@ -490,26 +578,30 @@ void unverifiedPurge_enqueuesMinioDeletesBeforeDeletingDbRecords() {
 
 - `@Scheduled(cron = "0 0 3 * * *")` — daily at 3 AM
 - `@SchedulerLock(name = "trashPurge", lockAtMostFor = "PT10M", lockAtLeastFor = "PT1M")`
-- Retention window from `@Value("${jpt.trash.retention-days:30}")` — per-user configurability is out of scope for Phase 3
+- Retention window from `@Value("${jpt.trash.retention-days:30}")` in `api/src/main/resources/application.yml` — per-user configurability is out of scope for Phase 3
 - Delete photos where `deleted_at < now() - (retentionDays || ' days')::interval`
-- Enqueue `delete-job` for each purged photo using **Lettuce pipeline** (single round-trip, not N individual `XADD` calls):
+- **Page through purged photos in batches of 500** to avoid loading all into heap (OOM risk for large trash windows):
   ```java
-  redisTemplate.executePipelined((RedisCallback<?>) connection -> {
-      for (Photo photo : purgedPhotos) {
-          connection.xAdd("delete-jobs", buildDeleteMessage(photo));
-      }
-      return null;
-  });
+  Pageable page = PageRequest.of(0, 500);
+  Slice<Photo> slice;
+  do {
+      slice = photoRepo.findPurgeableBatch(cutoff, page);
+      enqueueDeleteJobsBatch(slice.getContent()); // Lettuce pipeline per batch
+      deletePhotosBatch(slice.getContent());
+      page = slice.nextPageable();
+  } while (slice.hasNext());
   ```
+- **Null `storage_key` cleanup (compensating-Tx recovery):** Also query for photo rows where `storage_key IS NULL AND created_at < now() - INTERVAL '1 hour'` — these are upload compensating-Tx failures where the DB rollback itself failed. For each: enqueue delete-job (no-op if no MinIO object exists), delete the DB row, decrement `used_bytes`.
 - Cascade deletes `photo_keywords`, `album_photos`, `shares`
 
 **Step 3: Implement OrphanReconciliationScheduler**
 
 - `@Scheduled(cron = "0 0 4 * * SUN")` — weekly
 - `@SchedulerLock(name = "orphanReconciliation", lockAtMostFor = "PT2H", lockAtLeastFor = "PT5M")`
-- **To avoid OOM, stream both sides:**
-  - MinIO side: iterate by user prefix (`{user_id}/`) using paginated `listObjects` — never load all objects at once
-  - DB side: `@Query("SELECT storage_key FROM photos WHERE user_id = :userId AND deleted_at IS NULL")` returning `Stream<String>`, annotated `@Transactional(readOnly = true)`, consumed inside a try-with-resources block
+- **To avoid OOM, stream all sides:**
+  - User IDs: `SELECT id FROM users` returning `Stream<UUID>`, `@Transactional(readOnly = true)`, consumed inside a try-with-resources block
+  - MinIO side: for each user ID, iterate by prefix (`{user_id}/`) using paginated `listObjects` — never load all objects at once
+  - DB side: `@Query("SELECT storage_key FROM photos WHERE user_id = :userId AND deleted_at IS NULL")` returning `Stream<String>`, `@Transactional(readOnly = true)`, try-with-resources
 - Enqueue unreferenced MinIO objects for deletion
 
 **Step 4: Implement UnverifiedAccountPurgeScheduler**
