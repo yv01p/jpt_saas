@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -82,13 +83,13 @@ public class ThumbnailGenerator {
 
         try {
             // Download original to tmpfs
-            tmpOriginal = Files.createTempFile(Path.of("/tmp"), photoId.toString(), "." + ext);
+            tmpOriginal = File.createTempFile(photoId.toString(), "." + ext, new File("/tmp")).toPath();
             downloadFromMinio(storageKey, tmpOriginal);
 
             // For RAW: extract embedded JPEG using libraw (dcraw_emu)
             Path sourceForVips;
             if (RAW_MIME_TYPES.contains(mimeType)) {
-                tmpJpeg = Files.createTempFile(Path.of("/tmp"), photoId + "-raw", ".jpg");
+                tmpJpeg = File.createTempFile(photoId + "-raw", ".jpg", new File("/tmp")).toPath();
                 extractRawToJpeg(tmpOriginal, tmpJpeg, photoId);
                 sourceForVips = tmpJpeg;
             } else {
@@ -96,8 +97,8 @@ public class ThumbnailGenerator {
             }
 
             // Generate thumbnails with vipsthumbnail
-            tmpSmall = Files.createTempFile(Path.of("/tmp"), photoId + "-sm", ".jpg");
-            tmpMedium = Files.createTempFile(Path.of("/tmp"), photoId + "-md", ".jpg");
+            tmpSmall  = File.createTempFile(photoId + "-sm", ".jpg", new File("/tmp")).toPath();
+            tmpMedium = File.createTempFile(photoId + "-md", ".jpg", new File("/tmp")).toPath();
 
             generateThumbnail(sourceForVips, tmpSmall, THUMB_SM_SIZE, photoId);
             generateThumbnail(sourceForVips, tmpMedium, THUMB_MD_SIZE, photoId);
@@ -193,7 +194,7 @@ public class ThumbnailGenerator {
                     "-o", outputFile.toString() + "[Q=85]");
             pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process process = pb.start();
+            Process process = startProcess(pb);
             boolean completed = process.waitFor(timeout, TimeUnit.MINUTES);
             if (!completed) {
                 process.destroyForcibly();
@@ -216,6 +217,14 @@ public class ThumbnailGenerator {
             throw new ProcessingException(
                     "Failed to run vipsthumbnail (size=" + size + ") for photo " + photoId, e);
         }
+    }
+
+    /**
+     * Starts a process from a {@link ProcessBuilder}.
+     * Package-private so tests can spy on it and inject a mock {@link Process}.
+     */
+    Process startProcess(ProcessBuilder pb) throws IOException {
+        return pb.start();
     }
 
     /**

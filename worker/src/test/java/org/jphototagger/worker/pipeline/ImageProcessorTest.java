@@ -9,7 +9,6 @@ import org.jphototagger.api.enums.ProcessingStatus;
 import org.jphototagger.api.repository.PhotoMetadataRepository;
 import org.jphototagger.api.repository.PhotoRepository;
 import org.jphototagger.worker.config.WorkerProperties;
-import org.jphototagger.worker.config.TestRedisConfig;
 import org.jphototagger.worker.exception.ProcessingException;
 import org.jphototagger.worker.exception.ProcessTimeoutException;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +19,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,10 +29,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -172,20 +176,26 @@ class ImageProcessorTest {
 
         ThumbnailGenerator spy = spy(thumbnailGenerator);
 
-        // Stub download to write a file
+        // Stub download to write a real file so generate() proceeds past download
         doAnswer(inv -> {
             Path dest = inv.getArgument(1);
             Files.write(dest, minimalJpegBytes());
             return null;
         }).when(spy).downloadFromMinio(anyString(), any(Path.class));
 
-        // Stub generateThumbnail to throw ProcessTimeoutException (simulating timeout)
-        doThrow(new ProcessTimeoutException("vipsthumbnail timed out for photo " + photoId))
-                .when(spy).generateThumbnail(any(Path.class), any(Path.class), anyInt(), any(UUID.class));
+        // Create a mock Process that reports it did NOT complete within the timeout
+        Process mockProcess = mock(Process.class);
+        when(mockProcess.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(false);
 
+        // Stub startProcess so generate() → generateThumbnail() receives our mock Process
+        doReturn(mockProcess).when(spy).startProcess(any(ProcessBuilder.class));
+
+        // generate() must throw ProcessTimeoutException and must call destroyForcibly()
         assertThatThrownBy(() -> spy.generate(photoId, userId, storageKey, "image/jpeg"))
                 .isInstanceOf(ProcessTimeoutException.class)
                 .hasMessageContaining("timed out");
+
+        verify(mockProcess).destroyForcibly();
     }
 
     // =========================================================================
@@ -197,18 +207,30 @@ class ImageProcessorTest {
         UUID photoId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
 
-        // Use a real JPEG with EXIF (minimal — metadata-extractor will read it)
-        Path tmp = Files.createTempFile(Path.of("/tmp"), "meta-test", ".jpg");
+        // Create a real 1×1 JPEG with a known Make tag embedded so metadata-extractor
+        // can return at least one EXIF key. We write a standard JFIF JPEG and rely on
+        // metadata-extractor to detect the JFIF/Exif segments it can read.
+        Path tmp = File.createTempFile("meta-test-", ".jpg", new File("/tmp")).toPath();
         try {
-            Files.write(tmp, minimalJpegBytes());
+            BufferedImage img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+            ImageIO.write(img, "jpg", tmp.toFile());
 
-            // JdbcTemplate is mocked — just verify it was called with upsert SQL
+            // Capture all arguments passed to jdbcTemplate.update()
+            ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<Object> argsCaptor = ArgumentCaptor.forClass(Object.class);
             metadataExtractor.extract(photoId, userId, tmp);
 
             verify(jdbcTemplate).update(
                     argThat(sql -> sql.contains("INSERT INTO photo_metadata") &&
                                   sql.contains("ON CONFLICT")),
-                    any(), any(), any(), any(), any());
+                    any(), any(),
+                    argThat(exifJson -> {
+                        // metadata-extractor returns at least the JFIF directory entries
+                        // for any valid JPEG — the JSON must not be the empty object "{}"
+                        String json = (String) exifJson;
+                        return json != null && !json.equals("{}");
+                    }),
+                    any(), any());
         } finally {
             Files.deleteIfExists(tmp);
         }
@@ -277,32 +299,27 @@ class ImageProcessorTest {
 
     @Test
     void metadataExtractor_capturesExifToolOutputForLargeExifPhoto() throws Exception {
-        // SA2-F2: Verifies that exiftool stdout redirect-to-file works; even if exiftool
-        // is not installed, the fallback path should not block on stdout pipe.
-        // We test the runExifTool method directly with a temp file.
-        UUID photoId = UUID.randomUUID();
-        Path tmp = Files.createTempFile(Path.of("/tmp"), "large-exif", ".jpg");
+        // SA2-F2: Verifies that the ProcessBuilder for exiftool has stdout redirected
+        // to a file (not PIPE) before waitFor() is called, preventing pipe buffer
+        // exhaustion on photos with large XMP blocks.
+        //
+        // We call createExifToolProcessBuilder() directly and assert that the returned
+        // ProcessBuilder's redirectOutput() is set to Redirect.to(outputFile), not PIPE.
+        Path tmp = File.createTempFile("large-exif-", ".jpg", new File("/tmp")).toPath();
+        File outputFile = File.createTempFile("exiftool-verify-", ".json", new File("/tmp"));
         try {
-            // Write a 1 KB file (simulating photo with large XMP)
-            byte[] content = new byte[1024];
-            System.arraycopy(minimalJpegBytes(), 0, content, 0,
-                    Math.min(minimalJpegBytes().length, content.length));
-            Files.write(tmp, content);
+            Files.write(tmp, minimalJpegBytes());
 
-            // runExifTool should return without blocking, even if exiftool isn't installed
-            // (it will fail with IOException, but NOT by blocking on stdout pipe)
-            try {
-                Map<String, Object> result = metadataExtractor.runExifTool(tmp, photoId);
-                // If exiftool is installed, result may have data; if not, it's empty
-                assertThat(result).isNotNull();
-            } catch (ProcessingException e) {
-                // Expected if exiftool is not installed — acceptable outcome
-                assertThat(e.getMessage()).satisfiesAnyOf(
-                        msg -> assertThat(msg).contains("ExifTool"),
-                        msg -> assertThat(msg).contains("photo"));
-            }
+            ProcessBuilder pb = metadataExtractor.createExifToolProcessBuilder(tmp, outputFile);
+
+            assertThat(pb.redirectOutput())
+                    .as("stdout must be redirected to a file (SA2-F2), not PIPE or INHERIT")
+                    .isNotEqualTo(ProcessBuilder.Redirect.PIPE)
+                    .isNotEqualTo(ProcessBuilder.Redirect.INHERIT)
+                    .isEqualTo(ProcessBuilder.Redirect.to(outputFile));
         } finally {
             Files.deleteIfExists(tmp);
+            Files.deleteIfExists(outputFile.toPath());
         }
     }
 

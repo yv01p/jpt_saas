@@ -177,6 +177,20 @@ public class MetadataExtractor {
     }
 
     /**
+     * Constructs the {@link ProcessBuilder} for {@code exiftool -fast2 -json},
+     * with stdout redirected to {@code outputFile} to prevent pipe buffer exhaustion
+     * on large XMP blocks (SA2-F2).
+     * <p>Package-private so tests can spy on this method and inspect the redirect configuration.
+     */
+    ProcessBuilder createExifToolProcessBuilder(Path tmpFile, File outputFile) {
+        ProcessBuilder pb = new ProcessBuilder(
+                "exiftool", "-fast2", "-json", tmpFile.toString());
+        pb.redirectOutput(outputFile);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        return pb;
+    }
+
+    /**
      * Runs {@code exiftool -fast2 -json} and parses the JSON output.
      * stdout is redirected to a temp file before {@code waitFor()} to prevent
      * pipe buffer exhaustion on large XMP blocks (SA2-F2).
@@ -187,10 +201,7 @@ public class MetadataExtractor {
         File outputFile = null;
         try {
             outputFile = File.createTempFile("exiftool-", ".json", new File("/tmp"));
-            ProcessBuilder pb = new ProcessBuilder(
-                    "exiftool", "-fast2", "-json", tmpFile.toString());
-            pb.redirectOutput(outputFile);
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            ProcessBuilder pb = createExifToolProcessBuilder(tmpFile, outputFile);
             Process process = pb.start();
             boolean completed = process.waitFor(timeout, TimeUnit.MINUTES);
             if (!completed) {
