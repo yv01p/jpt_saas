@@ -55,6 +55,18 @@ public interface PhotoRepository extends JpaRepository<Photo, UUID> {
     List<Photo> findAllByUserIdWithStorageKey(@Param("userId") UUID userId);
 
 
+    /**
+     * Returns a paginated batch of PENDING or PROCESSING photos that are not
+     * soft-deleted. Used by the worker startup recovery scan to re-enqueue
+     * photos that were interrupted without leaving a PEL entry.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.processingStatus IN " +
+           "  (org.jphototagger.api.enums.ProcessingStatus.PENDING, " +
+           "   org.jphototagger.api.enums.ProcessingStatus.PROCESSING) " +
+           "AND p.deletedAt IS NULL " +
+           "ORDER BY p.uploadedAt ASC")
+    Page<Photo> findPendingOrProcessingForRecovery(Pageable pageable);
+
     Optional<Photo> findByUserIdAndContentHash(UUID userId, String contentHash);
 
     Optional<Photo> findByUserIdAndContentHashAndDeletedAtIsNull(UUID userId, String contentHash);
