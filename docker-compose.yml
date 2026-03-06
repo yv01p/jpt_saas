@@ -4,7 +4,7 @@ services:
     ports: ["80:80", "443:443"]
     volumes:
       - ./react-build:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - certbot_certs:/etc/letsencrypt:ro
       - certbot_www:/var/www/certbot:ro
     depends_on:
@@ -12,6 +12,8 @@ services:
         condition: service_started
     networks:
       - frontend
+    mem_limit: 128m
+    cpus: '0.5'
     restart: unless-stopped
 
   api:
@@ -24,8 +26,8 @@ services:
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_API_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_API_SECRET_KEY}
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: ${REDIS_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -37,8 +39,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -50,6 +52,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    mem_limit: 512m
+    cpus: '1.5'
     restart: unless-stopped
 
   worker:
@@ -61,15 +65,15 @@ services:
       DB_USER: ${WORKER_DB_USER}
       DB_PASS: ${WORKER_DB_PASS}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_WORKER_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_WORKER_SECRET_KEY}
       REDIS_URL: ${REDIS_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -85,6 +89,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=512M
+    mem_limit: 1g
+    cpus: '2.0'
     restart: unless-stopped
 
   postgres:
@@ -102,10 +108,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 512m
+    cpus: '1.0'
     restart: unless-stopped
 
   minio:
-    image: minio/minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1
     networks:
       - backend
     volumes:
@@ -120,12 +128,54 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: '0.5'
     restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z-cpuv1
+    networks:
+      - backend
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_API_ACCESS_KEY: ${MINIO_API_ACCESS_KEY}
+      MINIO_API_SECRET_KEY: ${MINIO_API_SECRET_KEY}
+      MINIO_WORKER_ACCESS_KEY: ${MINIO_WORKER_ACCESS_KEY}
+      MINIO_WORKER_SECRET_KEY: ${MINIO_WORKER_SECRET_KEY}
+      MINIO_BACKUP_ACCESS_KEY: ${MINIO_BACKUP_ACCESS_KEY}
+      MINIO_BACKUP_SECRET_KEY: ${MINIO_BACKUP_SECRET_KEY}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: '0.25'
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set minio http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+        mc mb --ignore-existing minio/jpt-photos &&
+        (mc admin user add minio $$MINIO_API_ACCESS_KEY $$MINIO_API_SECRET_KEY || true) &&
+        (mc admin policy attach minio readwrite --user $$MINIO_API_ACCESS_KEY || true) &&
+        (mc admin user add minio $$MINIO_WORKER_ACCESS_KEY $$MINIO_WORKER_SECRET_KEY || true) &&
+        (mc admin policy attach minio readwrite --user $$MINIO_WORKER_ACCESS_KEY || true) &&
+        (mc admin user add minio $$MINIO_BACKUP_ACCESS_KEY $$MINIO_BACKUP_SECRET_KEY || true) &&
+        (mc admin policy attach minio readonly --user $$MINIO_BACKUP_ACCESS_KEY || true) &&
+        echo minio-init complete"
 
   redis:
     image: redis:7-alpine
     networks:
       - backend
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
@@ -134,10 +184,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: '0.5'
     restart: unless-stopped
 
   backup:
-    image: minio/mc
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z-cpuv1
     networks:
       - backend
     restart: unless-stopped
@@ -151,8 +207,8 @@ services:
           sleep 3600;
         done"
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_BACKUP_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_BACKUP_SECRET_KEY}
       B2_ACCESS_KEY: ${B2_BACKUP_ACCESS_KEY}
       B2_SECRET_KEY: ${B2_BACKUP_SECRET_KEY}
     healthcheck:
@@ -161,9 +217,15 @@ services:
       timeout: 3s
       retries: 3
       start_period: 120s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: '0.25'
     depends_on:
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   pgbackup:
     build: ./pgbackup
@@ -194,6 +256,12 @@ services:
       timeout: 3s
       retries: 3
       start_period: 300s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: '0.25'
     secrets:
       - restic_pass
     depends_on:
@@ -207,6 +275,13 @@ services:
     volumes:
       - certbot_certs:/etc/letsencrypt
       - certbot_www:/var/www/certbot
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: '0.25'
+    restart: unless-stopped
     entrypoint: >
       /bin/sh -c "trap exit TERM; while :; do
         certbot renew --webroot -w /var/www/certbot;
