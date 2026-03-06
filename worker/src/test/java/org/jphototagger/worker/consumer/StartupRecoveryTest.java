@@ -79,7 +79,7 @@ class StartupRecoveryTest {
     // =========================================================================
 
     @Test
-    void xautoclaim_doesNotReclaimRecentlyProcessedMessages() {
+    void xautoclaim_doesNotReclaimRecentlyProcessedMessages() throws Exception {
         // XAUTOCLAIM must use the configured min-idle-time. Messages idle less
         // than that threshold will not be returned by Redis — the consumer
         // should call XAUTOCLAIM with the correct idle time.
@@ -96,10 +96,12 @@ class StartupRecoveryTest {
         ArgumentCaptor<XAutoClaimArgs<String>> argsCaptor = ArgumentCaptor.forClass(XAutoClaimArgs.class);
         verify(redis).xautoclaim(eq(PhotoJobConsumer.STREAM), argsCaptor.capture());
 
-        // We can't directly inspect minIdleTime from XAutoClaimArgs as it's private,
-        // but we can verify the call was made. The correct idle time is exercised
-        // by the integration path. At minimum, verify XAUTOCLAIM was called once.
-        assertThat(argsCaptor.getValue()).isNotNull();
+        // minIdleTime is a private field on XAutoClaimArgs with no public getter.
+        // Use reflection to verify the correct value from WorkerProperties was used.
+        java.lang.reflect.Field minIdleField = XAutoClaimArgs.class.getDeclaredField("minIdleTime");
+        minIdleField.setAccessible(true);
+        long actualIdleTime = (long) minIdleField.get(argsCaptor.getValue());
+        assertThat(actualIdleTime).isEqualTo(configuredIdle);
     }
 
     // =========================================================================

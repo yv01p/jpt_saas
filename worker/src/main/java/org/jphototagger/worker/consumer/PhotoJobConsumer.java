@@ -3,6 +3,7 @@ package org.jphototagger.worker.consumer;
 import io.lettuce.core.Consumer;
 import io.lettuce.core.Limit;
 import io.lettuce.core.Range;
+import io.lettuce.core.Range.Boundary;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.SetArgs;
 import io.lettuce.core.StreamMessage;
@@ -394,9 +395,12 @@ public class PhotoJobConsumer {
 
         List<PendingMessage> page;
         do {
+            Range<String> range = "-".equals(cursor)
+                    ? Range.create("-", "+")
+                    : Range.from(Boundary.excluding(cursor), Boundary.unbounded());
             page = redisCommands.xpending(
                     STREAM, GROUP,
-                    Range.create(cursor, "+"),
+                    range,
                     Limit.from(PEL_PAGE_SIZE));
 
             for (PendingMessage msg : page) {
