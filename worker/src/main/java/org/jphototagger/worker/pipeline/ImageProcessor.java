@@ -73,8 +73,9 @@ public class ImageProcessor {
                 ? storageKey.substring(storageKey.lastIndexOf('.') + 1)
                 : "jpg";
 
-        // Download the original once to tmpfs; reuse for both Tika validation,
-        // thumbnail generation, and metadata extraction (avoids triple download).
+        // Download the original once to tmpfs; reuse for both Tika validation and
+        // metadata extraction (avoids double download for those two steps).
+        // Note: ThumbnailGenerator.generate() performs its own independent download.
         Path tmpOriginal = null;
         try {
             tmpOriginal = File.createTempFile(
@@ -101,7 +102,8 @@ public class ImageProcessor {
             photoRepository.save(photo);
 
             try {
-                // Step 3: Generate thumbnails (ThumbnailGenerator downloads its own copy)
+                // Step 3: Generate thumbnails — ThumbnailGenerator downloads the original
+                // independently from MinIO (its own copy for libraw/vips processing)
                 thumbnailGenerator.generate(photoId, userId, storageKey, mimeType);
 
                 // Step 4: Extract metadata from the already-downloaded local file

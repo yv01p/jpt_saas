@@ -28,17 +28,7 @@ public class TikaValidator {
      * @throws ProcessingException if the MIME type does not start with {@code image/}
      */
     public void validate(Path file) {
-        String mimeType;
-        try {
-            mimeType = tika.detect(file.toFile());
-        } catch (IOException e) {
-            throw new ProcessingException("Failed to detect MIME type for file: " + file, e);
-        }
-        if (!mimeType.startsWith("image/")) {
-            throw new ProcessingException(
-                    "Rejected non-image content type: " + mimeType + " for file: " + file);
-        }
-        log.debug("TikaValidator accepted MIME type: {} for file: {}", mimeType, file);
+        detectAndValidate(file);  // throws ProcessingException if not an image
     }
 
     /**
