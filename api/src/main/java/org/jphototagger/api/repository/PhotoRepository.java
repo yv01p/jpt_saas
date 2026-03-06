@@ -37,6 +37,8 @@ public interface PhotoRepository extends JpaRepository<Photo, UUID> {
 
     Optional<Photo> findByUserIdAndContentHash(UUID userId, String contentHash);
 
+    Optional<Photo> findByUserIdAndContentHashAndDeletedAtIsNull(UUID userId, String contentHash);
+
     /**
      * EXIF field search using JSONB @> operator.
      * [v4 SA-5] ORDER BY is hardcoded in the SQL.

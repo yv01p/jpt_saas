@@ -73,8 +73,10 @@ class SchemaTest {
 
     @Test
     void deduplicationConstraintExists() {
+        // V5 migration replaced the old UNIQUE constraint (uq_user_content_hash) with a
+        // partial unique index (photos_user_content_hash_active_idx) covering only active rows.
         Integer count = jdbc.queryForObject(
-            "SELECT count(*) FROM information_schema.table_constraints WHERE constraint_name = 'uq_user_content_hash'",
+            "SELECT count(*) FROM pg_indexes WHERE indexname = 'photos_user_content_hash_active_idx'",
             Integer.class);
         assertThat(count).isEqualTo(1);
     }

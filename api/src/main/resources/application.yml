@@ -1,8 +1,14 @@
 spring:
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
   servlet:
     multipart:
       max-file-size: 200MB
       max-request-size: 200MB
+      location: /tmp
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/jpt}
     username: ${DB_USER:jpt_app}

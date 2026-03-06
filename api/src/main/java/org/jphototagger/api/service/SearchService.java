@@ -10,10 +10,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class SearchService {
+
+    private static final Set<String> ALLOWED_EXIF_FIELDS = Set.of(
+            "Make", "Model", "ExposureTime", "FNumber", "ISOSpeedRatings",
+            "DateTimeOriginal", "Flash", "FocalLength", "GPSLatitude", "GPSLongitude",
+            "LensModel", "Software", "Artist", "Copyright", "Orientation",
+            "PixelXDimension", "PixelYDimension", "ColorSpace", "WhiteBalance", "SceneCaptureType"
+    );
 
     private final PhotoRepository photoRepository;
     private final ObjectMapper objectMapper;
@@ -39,6 +47,9 @@ public class SearchService {
      */
     @Transactional(readOnly = true)
     public Page<Photo> searchByExif(UUID userId, String field, String value, int page, int size) {
+        if (!ALLOWED_EXIF_FIELDS.contains(field)) {
+            throw new IllegalArgumentException("Unknown EXIF field");
+        }
         ObjectNode node = objectMapper.createObjectNode();
         node.put(field, value);
         String jsonFilter;

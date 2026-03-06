@@ -66,7 +66,7 @@ class SearchControllerTest {
         jdbcTemplate.update(
                 "INSERT INTO photos (id, user_id, filename, caption, size_bytes, processing_status) "
                         + "VALUES (?, ?, ?, ?, ?, ?)",
-                id, userId, filename, caption, 1000, "done");
+                id, userId, filename, caption, 1000, "DONE");
     }
 
     private UUID createPhoto(UUID userId, String filename) {
@@ -74,7 +74,7 @@ class SearchControllerTest {
         jdbcTemplate.update(
                 "INSERT INTO photos (id, user_id, filename, size_bytes, processing_status) "
                         + "VALUES (?, ?, ?, ?, ?)",
-                id, userId, filename, 1000, "done");
+                id, userId, filename, 1000, "DONE");
         return id;
     }
 
@@ -115,12 +115,12 @@ class SearchControllerTest {
     void exifSearch_returnsPaginatedResults() throws Exception {
         UUID user = createUser("searchexif@test.com");
         UUID photo1 = createPhoto(user, "canon1.jpg");
-        createPhotoMetadata(photo1, user, "{\"Camera\":\"Canon EOS R5\"}");
+        createPhotoMetadata(photo1, user, "{\"Make\":\"Canon\"}");
         UUID photo2 = createPhoto(user, "nikon1.jpg");
-        createPhotoMetadata(photo2, user, "{\"Camera\":\"Nikon Z9\"}");
+        createPhotoMetadata(photo2, user, "{\"Make\":\"Nikon\"}");
 
         mockMvc.perform(get("/search/exif")
-                        .param("field", "Camera").param("value", "Canon EOS R5")
+                        .param("field", "Make").param("value", "Canon")
                         .param("page", "0").param("size", "50")
                         .cookie(jwtCookie(user)))
                 .andExpect(status().isOk())

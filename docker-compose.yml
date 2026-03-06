@@ -26,6 +26,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL}
       MINIO_ACCESS_KEY: ${MINIO_API_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_API_SECRET_KEY}
       JWT_SECRET: ${JWT_SECRET}
@@ -36,6 +37,8 @@ services:
       SMTP_HOST: ${SMTP_HOST}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
+    tmpfs:
+      - /tmp:size=${API_TMPFS_SIZE:-512m},mode=1777
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,7 +91,7 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:size=512M
+      - /tmp:size=${WORKER_TMPFS_SIZE:-1g},mode=1777
     mem_limit: 1g
     cpus: '2.0'
     restart: unless-stopped

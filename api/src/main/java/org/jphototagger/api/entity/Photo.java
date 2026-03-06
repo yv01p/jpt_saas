@@ -2,12 +2,15 @@ package org.jphototagger.api.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.jphototagger.api.enums.ProcessingStatus;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -44,6 +47,9 @@ public class Photo {
     @Column(name = "content_hash", length = 64)
     private String contentHash;
 
+    @Column(name = "original_filename", length = 512)
+    private String originalFilename;
+
     @Column(name = "taken_at")
     private Instant takenAt;
 
@@ -51,8 +57,9 @@ public class Photo {
     @Column(name = "uploaded_at", nullable = false, updatable = false)
     private Instant uploadedAt;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "processing_status", nullable = false, length = 16)
-    private String processingStatus = "pending";
+    private ProcessingStatus processingStatus = ProcessingStatus.PENDING;
 
     @Column(name = "deleted_at")
     private Instant deletedAt;
@@ -90,14 +97,17 @@ public class Photo {
     public String getContentHash() { return contentHash; }
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
 
+    public String getOriginalFilename() { return originalFilename; }
+    public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
+
     public Instant getTakenAt() { return takenAt; }
     public void setTakenAt(Instant takenAt) { this.takenAt = takenAt; }
 
     public Instant getUploadedAt() { return uploadedAt; }
     public void setUploadedAt(Instant uploadedAt) { this.uploadedAt = uploadedAt; }
 
-    public String getProcessingStatus() { return processingStatus; }
-    public void setProcessingStatus(String processingStatus) { this.processingStatus = processingStatus; }
+    public ProcessingStatus getProcessingStatus() { return processingStatus; }
+    public void setProcessingStatus(ProcessingStatus processingStatus) { this.processingStatus = processingStatus; }
 
     public Instant getDeletedAt() { return deletedAt; }
     public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }

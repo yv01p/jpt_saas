@@ -1,5 +1,7 @@
 package org.jphototagger.api.controller;
 
+import jakarta.validation.Valid;
+import org.jphototagger.api.dto.SavedSearchRequest;
 import org.jphototagger.api.entity.SavedSearch;
 import org.jphototagger.api.service.SavedSearchService;
 import org.springframework.data.domain.Page;
@@ -15,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -46,18 +47,18 @@ public class SavedSearchController {
     @PostMapping
     public ResponseEntity<SavedSearch> createSavedSearch(
             @AuthenticationPrincipal UUID userId,
-            @RequestBody Map<String, String> body) {
+            @Valid @RequestBody SavedSearchRequest body) {
         return ResponseEntity.status(201).body(
-                savedSearchService.createSavedSearch(userId, body.get("name"), body.get("queryJson")));
+                savedSearchService.createSavedSearch(userId, body.name(), body.queryJson()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<SavedSearch> updateSavedSearch(
             @AuthenticationPrincipal UUID userId,
             @PathVariable UUID id,
-            @RequestBody Map<String, String> body) {
+            @Valid @RequestBody SavedSearchRequest body) {
         return ResponseEntity.ok(
-                savedSearchService.updateSavedSearch(userId, id, body.get("name"), body.get("queryJson")));
+                savedSearchService.updateSavedSearch(userId, id, body.name(), body.queryJson()));
     }
 
     @DeleteMapping("/{id}")

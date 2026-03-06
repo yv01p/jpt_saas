@@ -1,5 +1,7 @@
 package org.jphototagger.api.controller;
 
+import jakarta.validation.Valid;
+import org.jphototagger.api.dto.AlbumRequest;
 import org.jphototagger.api.entity.Album;
 import org.jphototagger.api.service.AlbumService;
 import org.springframework.data.domain.Page;
@@ -15,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -46,16 +47,16 @@ public class AlbumController {
     @PostMapping
     public ResponseEntity<Album> createAlbum(
             @AuthenticationPrincipal UUID userId,
-            @RequestBody Map<String, String> body) {
-        return ResponseEntity.status(201).body(albumService.createAlbum(userId, body.get("name")));
+            @Valid @RequestBody AlbumRequest body) {
+        return ResponseEntity.status(201).body(albumService.createAlbum(userId, body.name()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<Album> updateAlbum(
             @AuthenticationPrincipal UUID userId,
             @PathVariable UUID id,
-            @RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(albumService.updateAlbum(userId, id, body.get("name")));
+            @Valid @RequestBody AlbumRequest body) {
+        return ResponseEntity.ok(albumService.updateAlbum(userId, id, body.name()));
     }
 
     @DeleteMapping("/{id}")

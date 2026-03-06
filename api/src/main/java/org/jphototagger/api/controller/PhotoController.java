@@ -1,5 +1,6 @@
 package org.jphototagger.api.controller;
 
+import org.jphototagger.api.dto.PhotoResponse;
 import org.jphototagger.api.entity.Photo;
 import org.jphototagger.api.service.PhotoService;
 import org.springframework.data.domain.Page;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 import java.util.UUID;
@@ -26,19 +28,27 @@ public class PhotoController {
         this.photoService = photoService;
     }
 
+    @PostMapping("/upload")
+    public ResponseEntity<PhotoResponse> uploadPhoto(
+            @AuthenticationPrincipal UUID userId,
+            @RequestParam("file") MultipartFile file) {
+        Photo photo = photoService.uploadPhoto(userId, file);
+        return ResponseEntity.ok(PhotoResponse.from(photo));
+    }
+
     @GetMapping
-    public ResponseEntity<Page<Photo>> listPhotos(
+    public ResponseEntity<Page<PhotoResponse>> listPhotos(
             @AuthenticationPrincipal UUID userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(photoService.listPhotos(userId, page, size));
+        return ResponseEntity.ok(photoService.listPhotos(userId, page, size).map(PhotoResponse::from));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Photo> getPhoto(
+    public ResponseEntity<PhotoResponse> getPhoto(
             @AuthenticationPrincipal UUID userId,
             @PathVariable UUID id) {
-        return ResponseEntity.ok(photoService.getPhoto(userId, id));
+        return ResponseEntity.ok(PhotoResponse.from(photoService.getPhoto(userId, id)));
     }
 
     @GetMapping("/{id}/status")
@@ -48,7 +58,7 @@ public class PhotoController {
         Photo photo = photoService.getPhotoStatus(userId, id);
         return ResponseEntity.ok(Map.of(
                 "id", photo.getId().toString(),
-                "processing_status", photo.getProcessingStatus()));
+                "processing_status", photo.getProcessingStatus().name()));
     }
 
     @DeleteMapping("/{id}")
@@ -60,11 +70,11 @@ public class PhotoController {
     }
 
     @GetMapping("/trash")
-    public ResponseEntity<Page<Photo>> listTrash(
+    public ResponseEntity<Page<PhotoResponse>> listTrash(
             @AuthenticationPrincipal UUID userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(photoService.listTrash(userId, page, size));
+        return ResponseEntity.ok(photoService.listTrash(userId, page, size).map(PhotoResponse::from));
     }
 
     @PostMapping("/{id}/restore")

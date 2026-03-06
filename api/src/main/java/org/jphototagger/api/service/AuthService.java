@@ -34,12 +34,16 @@ public class AuthService {
     }
 
     /**
-     * Register a new user. Returns the user ID.
+     * Register a new user. Silently no-ops on duplicate email (with timing equalization)
+     * so callers cannot enumerate registered addresses via response body or timing.
      */
-    public UUID register(String email, String password) {
+    public void register(String email, String password) {
         var existing = authJdbc.queryForList("SELECT id FROM users WHERE email = ?", email);
         if (!existing.isEmpty()) {
-            throw new IllegalArgumentException("Email already registered");
+            // Equalize timing with the happy path (bcrypt at cost 12 ≈ 250ms).
+            // Do not throw — caller always receives the same 202 response.
+            passwordEncoder.encode(password);
+            return;
         }
 
         String hash = passwordEncoder.encode(password);
@@ -63,8 +67,6 @@ public class AuthService {
                 UUID.randomUUID(), userId, tokenHash);
 
         emailService.sendVerificationEmail(email, plainToken);
-
-        return userId;
     }
 
     /**

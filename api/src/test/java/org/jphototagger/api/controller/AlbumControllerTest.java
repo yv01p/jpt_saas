@@ -70,7 +70,7 @@ class AlbumControllerTest {
         UUID id = UUID.randomUUID();
         jdbcTemplate.update(
                 "INSERT INTO photos (id, user_id, filename, size_bytes, processing_status) VALUES (?, ?, ?, ?, ?)",
-                id, userId, filename, 1000, "done");
+                id, userId, filename, 1000, "DONE");
         return id;
     }
 

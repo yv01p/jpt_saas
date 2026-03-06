@@ -1,5 +1,7 @@
 package org.jphototagger.api.controller;
 
+import jakarta.validation.Valid;
+import org.jphototagger.api.dto.KeywordRequest;
 import org.jphototagger.api.entity.Keyword;
 import org.jphototagger.api.service.KeywordService;
 import org.springframework.data.domain.Page;
@@ -16,7 +18,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -47,20 +48,16 @@ public class KeywordController {
     @PostMapping
     public ResponseEntity<Keyword> createKeyword(
             @AuthenticationPrincipal UUID userId,
-            @RequestBody Map<String, Object> body) {
-        String name = (String) body.get("name");
-        UUID parentId = body.get("parentId") != null ? UUID.fromString((String) body.get("parentId")) : null;
-        return ResponseEntity.status(201).body(keywordService.createKeyword(userId, name, parentId));
+            @Valid @RequestBody KeywordRequest body) {
+        return ResponseEntity.status(201).body(keywordService.createKeyword(userId, body.name(), body.parentId()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<Keyword> updateKeyword(
             @AuthenticationPrincipal UUID userId,
             @PathVariable UUID id,
-            @RequestBody Map<String, Object> body) {
-        String name = (String) body.get("name");
-        UUID parentId = body.get("parentId") != null ? UUID.fromString((String) body.get("parentId")) : null;
-        return ResponseEntity.ok(keywordService.updateKeyword(userId, id, name, parentId));
+            @Valid @RequestBody KeywordRequest body) {
+        return ResponseEntity.ok(keywordService.updateKeyword(userId, id, body.name(), body.parentId()));
     }
 
     @DeleteMapping("/{id}")

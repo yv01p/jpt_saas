@@ -13,6 +13,7 @@ jakarta-xml-bind = "4.0.2"
 jaxb-runtime = "4.0.5"
 testcontainers = "1.20.4"
 junit-jupiter = "5.10.2"
+jsoup = "1.18.3"
 
 [libraries]
 metadata-extractor = { module = "com.drewnoakes:metadata-extractor", version.ref = "metadata-extractor" }
@@ -29,6 +30,7 @@ jakarta-xml-bind-api = { module = "jakarta.xml.bind:jakarta.xml.bind-api", versi
 jaxb-runtime = { module = "org.glassfish.jaxb:jaxb-runtime", version.ref = "jaxb-runtime" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
 testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

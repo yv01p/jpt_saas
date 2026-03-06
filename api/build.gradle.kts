@@ -29,6 +29,8 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
     implementation(libs.minio)
+    implementation(libs.tika.core)
+    implementation(libs.jsoup)
 
     // Security & OAuth2
     implementation("org.springframework.boot:spring-boot-starter-security")

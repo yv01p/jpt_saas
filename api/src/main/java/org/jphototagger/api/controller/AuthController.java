@@ -50,8 +50,8 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<Map<String, String>> register(@Valid @RequestBody RegisterRequest request) {
         authService.register(request.email(), request.password());
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(Map.of("message", "Registration successful. Please verify your email."));
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(Map.of("message", "If this email is not registered, a verification email has been sent."));
     }
 
     @PostMapping("/login")

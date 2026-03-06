@@ -63,7 +63,10 @@ class WorkerDbUserTest {
                 .rootCause()
                 .satisfiesAnyOf(
                     t -> assertThat(t).hasMessageContaining("permission denied"),
-                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter")
+                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter"),
+                    // RLS policy casts the setting to UUID; if the setting is '' (empty string
+                    // left by shared-context connection reuse) the cast fails — access is still denied
+                    t -> assertThat(t).hasMessageContaining("invalid input syntax for type uuid")
                 );
         } finally {
             jdbc.execute("RESET ROLE");
@@ -79,7 +82,10 @@ class WorkerDbUserTest {
                 .rootCause()
                 .satisfiesAnyOf(
                     t -> assertThat(t).hasMessageContaining("permission denied"),
-                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter")
+                    t -> assertThat(t).hasMessageContaining("unrecognized configuration parameter"),
+                    // RLS policy casts the setting to UUID; if the setting is '' (empty string
+                    // left by shared-context connection reuse) the cast fails — access is still denied
+                    t -> assertThat(t).hasMessageContaining("invalid input syntax for type uuid")
                 );
         } finally {
             jdbc.execute("RESET ROLE");

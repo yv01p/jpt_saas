@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -28,6 +30,15 @@ public class RefreshTokenService {
     private static final String USER_REFRESH_PREFIX = "user_refresh:";
     private static final String FAMILY_PREFIX = "refresh_family:";
     private static final String TOKEN_FAMILY_PREFIX = "token_family:";
+
+    // Atomically reads and deletes a key in a single Redis round-trip (GETDEL semantics).
+    // Using a Lua script ensures no concurrent request can read the same token between GET and DEL.
+    private static final RedisScript<String> GETDEL_SCRIPT = RedisScript.of(
+            "local val = redis.call('GET', KEYS[1])\n" +
+            "if val then redis.call('DEL', KEYS[1]) end\n" +
+            "return val",
+            String.class
+    );
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
@@ -62,7 +73,9 @@ public class RefreshTokenService {
         String hash = sha256(rawToken);
         String key = REFRESH_PREFIX + hash;
 
-        String data = redis.opsForValue().get(key);
+        // Atomic read-and-delete: prevents TOCTOU race where two concurrent requests
+        // both read the token before either deletes it.
+        String data = redis.execute(GETDEL_SCRIPT, List.of(key));
         if (data == null) {
             // Token not found — check if it belongs to a known family (replay detection)
             detectReplay(hash);
@@ -73,8 +86,7 @@ public class RefreshTokenService {
         UUID userId = UUID.fromString(tokenData.get("userId"));
         String familyId = tokenData.get("family");
 
-        // Delete old token
-        redis.delete(key);
+        // Remove from user set (key already deleted atomically above)
         redis.opsForSet().remove(USER_REFRESH_PREFIX + userId, hash);
 
         // Issue new token in same family
@@ -105,7 +117,9 @@ public class RefreshTokenService {
         if (hashes != null) {
             for (String hash : hashes) {
                 redis.delete(REFRESH_PREFIX + hash);
-                redis.delete(TOKEN_FAMILY_PREFIX + hash);
+                // TOKEN_FAMILY_PREFIX entries are intentionally retained: if a stolen pre-revocation
+                // token is replayed after a password change, detectReplay() must still be able to
+                // identify the family and log the security event. TTL expiry handles cleanup.
             }
             // Note: family sets (refresh_family:{familyId}) are cleaned up via TTL expiry,
             // since we don't efficiently track which families a user's tokens belong to.

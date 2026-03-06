@@ -81,7 +81,7 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(uniqueEmail(), "securePassword12"))))
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
     }
 
     @Test
@@ -94,7 +94,9 @@ class AuthControllerTest {
     }
 
     @Test
-    void registerDuplicateEmailReturns400() throws Exception {
+    void registerDuplicateEmailReturns202() throws Exception {
+        // Anti-enumeration: duplicate email returns the same 202 as a new registration
+        // so callers cannot determine if an email is already registered.
         String email = uniqueEmail();
         register(email, "securePassword12");
 
@@ -102,8 +104,7 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(email, "securePassword12"))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("Invalid request parameters"));
+                .andExpect(status().isAccepted());
     }
 
     // --- Login ---
@@ -332,7 +333,7 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(email, password))))
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
     }
 
     private Cookie loginAndGetRefreshCookie(String email, String password) throws Exception {
