@@ -110,7 +110,7 @@ class PhotoJobConsumerTest {
     }
 
     @Test
-    void photoJobConsumer_validatesPhotoExistsBeforeProcessing() {
+    void photoJobConsumer_happyPath_photoFound() {
         // A photo that IS found — verify processing happens
         UUID photoId = UUID.randomUUID();
         Photo photo = photoWith(ProcessingStatus.PENDING,

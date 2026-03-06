@@ -23,11 +23,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -43,6 +42,8 @@ import java.util.UUID;
  *
  * <p>This class is instantiated and managed by {@link ConsumerConfig}; it is not
  * a {@code @Component} to avoid double-registration with the application context.
+ *
+ * @see ConsumerConfig
  */
 public class PhotoJobConsumer {
 
@@ -93,7 +94,7 @@ public class PhotoJobConsumer {
     // -------------------------------------------------------------------------
 
     /**
-     * Primary constructor used by tests and by Spring (via the {@link PhotoJobConsumerFactory} bean).
+     * Primary constructor used by tests and by Spring (via the {@link ConsumerConfig} bean).
      */
     PhotoJobConsumer(RedisCommands<String, String> redisCommands,
                      PhotoRepository photoRepository,
@@ -102,7 +103,7 @@ public class PhotoJobConsumer {
                      String consumerName) {
         this.redisCommands  = redisCommands;
         this.photoRepository = photoRepository;
-        this.imageProcessor  = imageProcessor;
+        this.imageProcessor  = Objects.requireNonNull(imageProcessor, "imageProcessor must not be null");
         this.workerProperties = workerProperties;
         this.consumerName    = consumerName;
 
@@ -404,18 +405,10 @@ public class PhotoJobConsumer {
                     Limit.from(PEL_PAGE_SIZE));
 
             for (PendingMessage msg : page) {
-                // The PEL doesn't store message body fields — we use the message ID here.
-                // The actual photo_id is embedded in the message body and we can only
-                // deduplicate by message ID at the PEL level. We store raw IDs; the
-                // re-enqueue check uses photo_id from DB rows and matches them against
-                // stream message bodies via a stream range scan where possible.
-                //
-                // For the common case (startup after crash), the stream still contains
-                // the original message whose body has photo_id. We treat pelPhotoIds as
-                // a set of stream message IDs and cross-reference via XRANGE when needed.
-                // However, because the spec says to collect photo_ids from PEL messages,
-                // and PendingMessage only has stream message ID (not body), we do a
-                // targeted XRANGE to fetch the body for each PEL entry.
+                // The PEL tracks delivery metadata (message ID, consumer, idle time, count)
+                // but not the message body. We do a targeted XRANGE to fetch the photo_id
+                // field from the body of each PEL entry, then store those photo_id values
+                // in the set used for deduplication during the re-enqueue scan.
                 fetchPhotoIdFromStream(msg.getId()).ifPresent(pelPhotoIds::add);
             }
 
@@ -438,30 +431,12 @@ public class PhotoJobConsumer {
             if (msgs != null && !msgs.isEmpty()) {
                 return Optional.ofNullable(msgs.get(0).getBody().get("photo_id"));
             }
+            log.warn("PEL entry {} has no corresponding stream message (may have been trimmed)" +
+                     " — photo_id will be absent from dedup filter", messageId);
         } catch (Exception e) {
             log.warn("Failed to fetch stream message {} for PEL deduplication", messageId, e);
         }
         return Optional.empty();
     }
 
-    // -------------------------------------------------------------------------
-    // Static factory helper for consumer name
-    // -------------------------------------------------------------------------
-
-    /**
-     * Builds a stable consumer name from {@code HOSTNAME} env var + PID.
-     * Falls back to {@code InetAddress}, then a random UUID.
-     */
-    static String buildConsumerName() {
-        String hostname = Optional.ofNullable(System.getenv("HOSTNAME"))
-                .filter(s -> !s.isBlank())
-                .orElseGet(() -> {
-                    try {
-                        return InetAddress.getLocalHost().getHostName();
-                    } catch (UnknownHostException e) {
-                        return UUID.randomUUID().toString();
-                    }
-                });
-        return hostname + "-" + ProcessHandle.current().pid();
-    }
 }

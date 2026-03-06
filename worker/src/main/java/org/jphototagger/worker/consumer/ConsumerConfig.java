@@ -10,10 +10,17 @@ import org.jphototagger.worker.pipeline.ImageProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.scheduling.annotation.EnableScheduling;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Wires up the Redis Streams consumers using native Lettuce commands.
@@ -62,6 +69,27 @@ public class ConsumerConfig {
         return lettuceStreamConnection.sync();
     }
 
+    /**
+     * Builds a stable consumer name from {@code HOSTNAME} env var + PID.
+     * Falls back to {@link InetAddress}, then a random UUID.
+     *
+     * <p>Shared by both {@link PhotoJobConsumer} and {@link DeleteJobConsumer}
+     * so that they use a consistent, process-unique identity.
+     */
+    @Bean
+    public String consumerName() {
+        String hostname = Optional.ofNullable(System.getenv("HOSTNAME"))
+                .filter(s -> !s.isBlank())
+                .orElseGet(() -> {
+                    try {
+                        return InetAddress.getLocalHost().getHostName();
+                    } catch (UnknownHostException e) {
+                        return UUID.randomUUID().toString();
+                    }
+                });
+        return hostname + "-" + ProcessHandle.current().pid();
+    }
+
     // -------------------------------------------------------------------------
     // Consumer beans
     // -------------------------------------------------------------------------
@@ -71,14 +99,13 @@ public class ConsumerConfig {
             RedisCommands<String, String> lettuceRedisCommands,
             PhotoRepository photoRepository,
             ImageProcessor imageProcessor,
-            WorkerProperties workerProperties) {
-        String consumerName = PhotoJobConsumer.buildConsumerName();
+            WorkerProperties workerProperties,
+            String consumerName) {
         log.info("Registering PhotoJobConsumer with consumerName={}", consumerName);
         PhotoJobConsumer consumer = new PhotoJobConsumer(
                 lettuceRedisCommands, photoRepository, imageProcessor,
                 workerProperties, consumerName);
         consumer.ensureGroupExists();
-        consumer.performStartupRecovery();
         return consumer;
     }
 
@@ -87,10 +114,27 @@ public class ConsumerConfig {
             RedisCommands<String, String> lettuceRedisCommands,
             MinioClient minioClient,
             WorkerProperties workerProperties,
+            String consumerName,
             @Value("${minio.bucket}") String bucket) {
         DeleteJobConsumer consumer = new DeleteJobConsumer(
-                lettuceRedisCommands, minioClient, workerProperties, bucket);
+                lettuceRedisCommands, minioClient, workerProperties, bucket, consumerName);
         consumer.ensureGroupExists();
         return consumer;
+    }
+
+    // -------------------------------------------------------------------------
+    // Startup recovery — deferred until application context is fully ready
+    // -------------------------------------------------------------------------
+
+    /**
+     * Runs startup recovery after the Spring application context is fully
+     * initialised. Deferring to {@link ApplicationReadyEvent} ensures Redis
+     * unavailability during context startup does not abort the whole context.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void runStartupRecovery(ApplicationReadyEvent event) {
+        PhotoJobConsumer consumer = event.getApplicationContext()
+                .getBean(PhotoJobConsumer.class);
+        consumer.performStartupRecovery();
     }
 }

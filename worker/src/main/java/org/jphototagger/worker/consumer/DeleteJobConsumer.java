@@ -24,6 +24,8 @@ import java.util.regex.Pattern;
  *
  * <p>This class is instantiated and managed by {@link ConsumerConfig}; it is not
  * a {@code @Component} to avoid double-registration with the application context.
+ *
+ * @see ConsumerConfig
  */
 public class DeleteJobConsumer {
 
@@ -64,17 +66,18 @@ public class DeleteJobConsumer {
     // -------------------------------------------------------------------------
 
     /**
-     * Constructor used by tests and Spring (via {@link DeleteJobConsumerFactory}).
+     * Constructor used by tests and Spring (via {@link ConsumerConfig}).
      */
     DeleteJobConsumer(RedisCommands<String, String> redisCommands,
                       MinioClient minioClient,
                       WorkerProperties workerProperties,
-                      String bucket) {
+                      String bucket,
+                      String consumerName) {
         this.redisCommands   = redisCommands;
         this.minioClient     = minioClient;
         this.workerProperties = workerProperties;
         this.bucket          = bucket;
-        this.consumerName    = PhotoJobConsumer.buildConsumerName();
+        this.consumerName    = consumerName;
 
         log.info("DeleteJobConsumer starting with consumerName={}", consumerName);
     }
@@ -154,19 +157,22 @@ public class DeleteJobConsumer {
             return;
         }
 
-        // Delete original
-        deleteObject(originalKey, photoId);
+        // Delete original — XACK even if MinIO fails (at-most-once semantics for
+        // delete jobs; MinIO's deleteObject is idempotent and there is no XAUTOCLAIM
+        // retry mechanism on this stream, so orphaning the message forever is worse
+        // than accepting a missed delete).
+        deleteObject(originalKey, photoId, messageId);
 
         // Delete thumbnails — skip if key is invalid (may be absent for photos
         // that never completed thumbnail generation), but log at WARN
         if (isValidStorageKey(thumbnailSm)) {
-            deleteObject(thumbnailSm, photoId);
+            deleteObject(thumbnailSm, photoId, messageId);
         } else {
             log.warn("thumbnail_sm key invalid format — skipping, photo_id={}", photoId);
         }
 
         if (isValidStorageKey(thumbnailMd)) {
-            deleteObject(thumbnailMd, photoId);
+            deleteObject(thumbnailMd, photoId, messageId);
         } else {
             log.warn("thumbnail_md key invalid format — skipping, photo_id={}", photoId);
         }
@@ -179,7 +185,12 @@ public class DeleteJobConsumer {
     // MinIO helpers
     // -------------------------------------------------------------------------
 
-    private void deleteObject(String key, String photoId) {
+    /**
+     * Attempts to delete a single MinIO object. On failure, logs at ERROR and
+     * continues — XACK will still be issued by the caller so the message is not
+     * permanently orphaned in the PEL (at-most-once semantics for delete jobs).
+     */
+    private void deleteObject(String key, String photoId, String messageId) {
         try {
             minioClient.removeObject(
                     RemoveObjectArgs.builder()
@@ -188,9 +199,10 @@ public class DeleteJobConsumer {
                             .build());
             log.debug("Deleted MinIO object: {}", key);
         } catch (Exception e) {
-            log.error("Failed to delete MinIO object '{}' for photo_id={}", key, photoId, e);
-            // Re-throw as runtime — caller (processMessage) will leave unACKed for retry
-            throw new RuntimeException("MinIO delete failed for key=" + key, e);
+            log.error("Failed to delete MinIO object '{}' for photo_id={} (message={}) — " +
+                      "XACK will still be issued (at-most-once delete semantics)",
+                      key, photoId, messageId, e);
+            // Do NOT re-throw — caller must be able to XACK the message regardless.
         }
     }
 

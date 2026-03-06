@@ -14,6 +14,7 @@ import org.jphototagger.api.entity.Photo;
 import org.jphototagger.api.enums.ProcessingStatus;
 import org.jphototagger.api.repository.PhotoRepository;
 import org.jphototagger.worker.config.WorkerProperties;
+import org.jphototagger.worker.pipeline.ImageProcessor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +43,7 @@ class StartupRecoveryTest {
 
     @Mock private RedisCommands<String, String> redis;
     @Mock private PhotoRepository photoRepository;
+    @Mock private ImageProcessor imageProcessor;
 
     private WorkerProperties workerProperties;
     private PhotoJobConsumer consumer;
@@ -52,8 +54,8 @@ class StartupRecoveryTest {
     void setUp() {
         workerProperties = new WorkerProperties();
         workerProperties.getStreams().setMaxRetries(3);
-        // ImageProcessor not needed for recovery tests
-        consumer = new PhotoJobConsumer(redis, photoRepository, null, workerProperties, INSTANCE_ID);
+        // ImageProcessor not invoked by recovery tests but required by constructor
+        consumer = new PhotoJobConsumer(redis, photoRepository, imageProcessor, workerProperties, INSTANCE_ID);
     }
 
     // =========================================================================

@@ -39,7 +39,7 @@ class DeleteJobConsumerTest {
     @BeforeEach
     void setUp() {
         workerProperties = new WorkerProperties();
-        consumer = new DeleteJobConsumer(redis, minioClient, workerProperties, "jpt-photos");
+        consumer = new DeleteJobConsumer(redis, minioClient, workerProperties, "jpt-photos", "test-consumer");
     }
 
     // =========================================================================
@@ -172,6 +172,35 @@ class DeleteJobConsumerTest {
 
         verify(redis).xack(DeleteJobConsumer.STREAM, DeleteJobConsumer.GROUP, msgId);
         verify(minioClient, never()).removeObject(any(RemoveObjectArgs.class));
+    }
+
+    @Test
+    void deleteJobConsumer_xacksAndLogsOnMinioDeleteFailure() throws Exception {
+        // C2: MinIO failure must not orphan the message in the PEL.
+        // XACK must be called even when removeObject throws, because there is no
+        // XAUTOCLAIM retry mechanism on the delete-jobs stream.
+        UUID photoId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        String msgId = "6-0";
+        String origKey = validOriginalKey(userId, photoId);
+        String smKey   = validSmKey(userId, photoId);
+        String mdKey   = validMdKey(userId, photoId);
+
+        when(redis.xreadgroup(
+                any(Consumer.class),
+                any(XReadArgs.class),
+                any(XReadArgs.StreamOffset.class)))
+                .thenReturn(List.of(message(msgId, photoId, origKey, smKey, mdKey)))
+                .thenReturn(List.of());
+
+        // All MinIO calls throw
+        doThrow(new RuntimeException("MinIO unavailable"))
+                .when(minioClient).removeObject(any(RemoveObjectArgs.class));
+
+        consumer.pollOnce();
+
+        // XACK must still be issued despite the MinIO failure
+        verify(redis).xack(DeleteJobConsumer.STREAM, DeleteJobConsumer.GROUP, msgId);
     }
 
     @Test
