@@ -29,4 +29,33 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody().error()).isEqualTo("Resource already exists");
         assertThat(response.getBody().status()).isEqualTo(409);
     }
+
+    @Test
+    void handleIllegalArgumentReturns400WithGenericMessage() {
+        var response = handler.handleIllegalArgument(
+                new IllegalArgumentException("Invalid UUID string: attacker-controlled-value"));
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("Invalid request parameters");
+        assertThat(response.getBody().status()).isEqualTo(400);
+    }
+
+    @Test
+    void handleIllegalStateReturns409WithGenericMessage() {
+        var response = handler.handleIllegalState(
+                new IllegalStateException("Internal state detail that must not leak"));
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("Request cannot be completed");
+        assertThat(response.getBody().status()).isEqualTo(409);
+    }
+
+    @Test
+    void handleUnexpectedReturns500WithGenericMessage() {
+        var response = handler.handleUnexpected(new RuntimeException("internal db path or secret"));
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("An internal error occurred");
+        assertThat(response.getBody().status()).isEqualTo(500);
+    }
 }

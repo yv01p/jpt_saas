@@ -94,7 +94,7 @@ class AuthControllerTest {
     }
 
     @Test
-    void registerDuplicateEmailReturns409() throws Exception {
+    void registerDuplicateEmailReturns400() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
 
@@ -102,8 +102,8 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(email, "securePassword12"))))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value("Email already registered"));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Invalid request parameters"));
     }
 
     // --- Login ---
