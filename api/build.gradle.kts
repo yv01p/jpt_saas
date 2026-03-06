@@ -48,4 +48,5 @@ dependencies {
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.testcontainers:junit-jupiter")
+    // testcontainers:redis is not used — GenericContainer (from :testcontainers) is used instead
 }

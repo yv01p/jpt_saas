@@ -43,6 +43,13 @@ spring:
     redis:
       host: localhost  # Testcontainers manages this
 
+minio:
+  endpoint: http://localhost:9000
+  public-url: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: jpt-photos
+
 # [v4 SA-10] Restrict actuator exposure
 management:
   endpoints:
