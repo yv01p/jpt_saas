@@ -251,7 +251,13 @@ public class PhotoService {
 
     @Transactional(readOnly = true)
     public Photo getPhotoStatus(UUID userId, UUID photoId) {
-        return getPhoto(userId, photoId);
+        Photo photo = photoRepository.findById(photoId)
+                .filter(p -> p.getDeletedAt() == null)
+                .orElseThrow(() -> new EntityNotFoundException("Photo not found"));
+        if (!photo.getUserId().equals(userId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Access denied");
+        }
+        return photo;
     }
 
     @Transactional

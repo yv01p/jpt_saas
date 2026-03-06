@@ -304,16 +304,16 @@ class PhotoControllerTest {
 
     @Test
     void photoStatus_anotherUsersPhotoReturns403() throws Exception {
-        // assert GET /api/photos/{id}/status returns 403 (404 in our impl) when id belongs to a different user
-        // Note: PhotoService.getPhotoStatus delegates to getPhoto(userId, id) which returns 404 (EntityNotFound)
-        // when the photo belongs to a different user. This is the correct ownership enforcement behavior.
+        // assert GET /photos/{id}/status returns 403 when the photo belongs to a different user.
+        // getPhotoStatus() explicitly checks ownership and throws AccessDeniedException → 403,
+        // distinguishing "not found" (404) from "exists but not yours" (403).
         UUID user1 = createUser("status-owner@test.com", 0);
         UUID user2 = createUser("status-intruder@test.com", 0);
         UUID photoId = createPhoto(user1, "private.jpg", 1000, "PROCESSING", null);
 
         mockMvc.perform(get("/photos/" + photoId + "/status")
                         .cookie(jwtCookie(user2)))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
     }
 
     @Test
