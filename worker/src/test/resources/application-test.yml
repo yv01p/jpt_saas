@@ -1,0 +1,24 @@
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
+    username: test
+    password: test
+    hikari:
+      connection-init-sql: "SELECT 1"
+  flyway:
+    url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
+    user: test
+    password: test
+    placeholders:
+      jpt_app_password: test_app_password
+      worker_db_user_password: test_worker_password
+      jpt_auth_password: test_auth_password
+  data:
+    redis:
+      host: localhost  # Testcontainers manages this
+
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: jpt-photos

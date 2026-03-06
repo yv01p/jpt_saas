@@ -1,0 +1,48 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/jpt}
+    username: ${DB_USER:jpt_worker}      # restricted DB user
+    password: ${DB_PASS}
+    hikari:
+      maximum-pool-size: 5               # smaller pool for worker
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    url: ${FLYWAY_DB_URL:${DB_URL:jdbc:postgresql://localhost:5432/jpt}}
+    user: ${FLYWAY_DB_USER:jpt}
+    password: ${FLYWAY_DB_PASS}
+    placeholders:
+      jpt_app_password: ${DB_PASS}
+      worker_db_user_password: ${WORKER_DB_PASS}
+      jpt_auth_password: ${JPT_AUTH_PASSWORD}
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      password: ${REDIS_PASSWORD:}
+
+worker:
+  streams:
+    claim-idle-time-ms: 1800000   # 30 minutes — must exceed worst-case RAW processing time
+    max-retries: 3                 # Dead-letter after this many delivery attempts
+  process:
+    timeout-minutes: 5             # Per-tool ProcessBuilder timeout
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: jpt-photos
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
