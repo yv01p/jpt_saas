@@ -6,13 +6,11 @@ import org.jphototagger.api.repository.PhotoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -35,15 +33,15 @@ public class UnverifiedAccountPurgeScheduler {
 
     private final JdbcTemplate authJdbcTemplate;
     private final PhotoRepository photoRepository;
-    private final StringRedisTemplate redisTemplate;
+    private final PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer;
 
     public UnverifiedAccountPurgeScheduler(
             @Qualifier("authJdbcTemplate") JdbcTemplate authJdbcTemplate,
             PhotoRepository photoRepository,
-            StringRedisTemplate redisTemplate) {
+            PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer) {
         this.authJdbcTemplate = authJdbcTemplate;
         this.photoRepository = photoRepository;
-        this.redisTemplate = redisTemplate;
+        this.photoDeleteJobEnqueuer = photoDeleteJobEnqueuer;
     }
 
     @Scheduled(cron = "0 30 3 * * *")
@@ -102,21 +100,7 @@ public class UnverifiedAccountPurgeScheduler {
                 userId, photos.size());
     }
 
-    /**
-     * Enqueues a delete-job message for each photo.
-     * Adds messages to the Redis stream individually; Lettuce handles multiplexing.
-     */
     private void enqueueDeleteJobsBatch(List<Photo> photos) {
-        for (Photo photo : photos) {
-            UUID photoId = photo.getId();
-            UUID userId = photo.getUserId();
-            Map<String, String> msg = Map.of(
-                    "photo_id", photoId.toString(),
-                    "original_key", photo.getStorageKey(),
-                    "thumbnail_sm", userId + "/thumbnails/" + photoId + "_sm.jpg",
-                    "thumbnail_md", userId + "/thumbnails/" + photoId + "_md.jpg"
-            );
-            redisTemplate.opsForStream().add("delete-jobs", msg);
-        }
+        photoDeleteJobEnqueuer.enqueue(photos);
     }
 }

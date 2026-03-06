@@ -6,7 +6,6 @@ import org.jphototagger.api.repository.PhotoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -31,17 +29,17 @@ public class TrashPurgeScheduler {
     private static final Logger log = LoggerFactory.getLogger(TrashPurgeScheduler.class);
 
     private final PhotoRepository photoRepository;
-    private final StringRedisTemplate redisTemplate;
+    private final PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer;
     private final JdbcTemplate jdbcTemplate;
     private final int retentionDays;
 
     public TrashPurgeScheduler(
             PhotoRepository photoRepository,
-            StringRedisTemplate redisTemplate,
+            PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer,
             JdbcTemplate jdbcTemplate,
             @Value("${jpt.trash.retention-days:30}") int retentionDays) {
         this.photoRepository = photoRepository;
-        this.redisTemplate = redisTemplate;
+        this.photoDeleteJobEnqueuer = photoDeleteJobEnqueuer;
         this.jdbcTemplate = jdbcTemplate;
         this.retentionDays = retentionDays;
     }
@@ -76,21 +74,11 @@ public class TrashPurgeScheduler {
     }
 
     /**
-     * Enqueues a delete-job for each photo in the batch.
-     * Adds messages to the Redis stream individually; Lettuce handles multiplexing.
+     * Enqueues a delete-job for each photo in the batch using a Lettuce pipeline,
+     * sending all XADD commands in a single round-trip.
      */
     private void enqueueDeleteJobsBatch(List<Photo> batch) {
-        for (Photo photo : batch) {
-            UUID photoId = photo.getId();
-            UUID userId = photo.getUserId();
-            Map<String, String> msg = Map.of(
-                    "photo_id", photoId.toString(),
-                    "original_key", photo.getStorageKey(),
-                    "thumbnail_sm", userId + "/thumbnails/" + photoId + "_sm.jpg",
-                    "thumbnail_md", userId + "/thumbnails/" + photoId + "_md.jpg"
-            );
-            redisTemplate.opsForStream().add("delete-jobs", msg);
-        }
+        photoDeleteJobEnqueuer.enqueue(batch);
     }
 
     private void deletePhotosBatch(List<Photo> batch) {
@@ -100,7 +88,7 @@ public class TrashPurgeScheduler {
 
     /**
      * Cleans up photo rows where {@code storage_key IS NULL} and
-     * {@code created_at < now() - INTERVAL '1 hour'} — these are upload
+     * {@code uploaded_at < now() - INTERVAL '1 hour'} — these are upload
      * compensating-Tx failures. Uses a CTE to atomically decrement
      * {@code used_bytes} on the owning user.
      *

@@ -54,7 +54,6 @@ app:
     general: 1000     # general requests per hour per user
     auth: 20          # auth attempts per hour per IP
   default-share-days: 30
-  trash-retention-days: 30
 
 management:
   endpoints:

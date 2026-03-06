@@ -5,19 +5,25 @@ import io.minio.MinioClient;
 import io.minio.Result;
 import io.minio.messages.Item;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.jphototagger.api.entity.Photo;
 import org.jphototagger.api.repository.PhotoRepository;
 import org.jphototagger.api.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -35,19 +41,19 @@ public class OrphanReconciliationScheduler {
     private final UserRepository userRepository;
     private final PhotoRepository photoRepository;
     private final MinioClient minioInternalClient;
-    private final StringRedisTemplate redisTemplate;
+    private final PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer;
     private final String bucket;
 
     public OrphanReconciliationScheduler(
             UserRepository userRepository,
             PhotoRepository photoRepository,
             @Qualifier("minioInternalClient") MinioClient minioInternalClient,
-            StringRedisTemplate redisTemplate,
+            PhotoDeleteJobEnqueuer photoDeleteJobEnqueuer,
             @Value("${minio.bucket}") String bucket) {
         this.userRepository = userRepository;
         this.photoRepository = photoRepository;
         this.minioInternalClient = minioInternalClient;
-        this.redisTemplate = redisTemplate;
+        this.photoDeleteJobEnqueuer = photoDeleteJobEnqueuer;
         this.bucket = bucket;
     }
 
@@ -70,7 +76,6 @@ public class OrphanReconciliationScheduler {
 
     private int reconcileUser(UUID userId) {
         String prefix = userId + "/originals/";
-        int count = 0;
 
         Iterable<Result<Item>> objects = minioInternalClient.listObjects(
                 ListObjectsArgs.builder()
@@ -79,6 +84,9 @@ public class OrphanReconciliationScheduler {
                         .recursive(false)
                         .build());
 
+        // Pass 1: collect all parseable (photoId -> objectKey) pairs from MinIO listing.
+        // Keeps only entries under the expected originals prefix.
+        Map<UUID, String> candidateKeys = new HashMap<>();
         for (Result<Item> result : objects) {
             try {
                 Item item = result.get();
@@ -100,24 +108,32 @@ public class OrphanReconciliationScheduler {
                     continue;
                 }
 
-                // Check if photo row exists
-                if (photoRepository.existsById(photoId)) {
-                    continue;
-                }
-
-                // True orphan — enqueue delete-job
-                Map<String, String> msg = Map.of(
-                        "photo_id", photoId.toString(),
-                        "original_key", objectKey,
-                        "thumbnail_sm", userId + "/thumbnails/" + photoId + "_sm.jpg",
-                        "thumbnail_md", userId + "/thumbnails/" + photoId + "_md.jpg"
-                );
-                redisTemplate.opsForStream().add("delete-jobs", msg);
-                count++;
-                log.debug("OrphanReconciliationScheduler: orphan enqueued key={}", objectKey);
+                candidateKeys.put(photoId, objectKey);
 
             } catch (Exception e) {
                 log.error("OrphanReconciliationScheduler: error processing MinIO object", e);
+            }
+        }
+
+        if (candidateKeys.isEmpty()) {
+            return 0;
+        }
+
+        // Pass 2: single batch DB query — find which candidate IDs actually exist.
+        List<UUID> candidateIds = new ArrayList<>(candidateKeys.keySet());
+        Set<UUID> existingIds = photoRepository.findAllById(candidateIds).stream()
+                .map(Photo::getId)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        // Pass 3: enqueue delete-jobs only for true orphans (not in DB).
+        int count = 0;
+        for (Map.Entry<UUID, String> entry : candidateKeys.entrySet()) {
+            UUID photoId  = entry.getKey();
+            String objectKey = entry.getValue();
+            if (!existingIds.contains(photoId)) {
+                photoDeleteJobEnqueuer.enqueueOrphan(userId, photoId, objectKey);
+                count++;
+                log.debug("OrphanReconciliationScheduler: orphan enqueued key={}", objectKey);
             }
         }
 

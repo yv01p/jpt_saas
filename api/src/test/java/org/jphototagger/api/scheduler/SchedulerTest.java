@@ -147,10 +147,12 @@ class SchedulerTest {
 
     private void setCreatedAtDaysAgo(UUID userId, int days) throws Exception {
         try (Connection conn = DriverManager.getConnection(
-                pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())) {
-            conn.createStatement().execute(
-                    "UPDATE users SET created_at = NOW() - INTERVAL '" + days + " days' WHERE id = '"
-                            + userId + "'");
+                pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+             var ps = conn.prepareStatement(
+                     "UPDATE users SET created_at = NOW() - (? * INTERVAL '1 day') WHERE id = ?")) {
+            ps.setInt(1, days);
+            ps.setObject(2, userId);
+            ps.execute();
         }
     }
 
