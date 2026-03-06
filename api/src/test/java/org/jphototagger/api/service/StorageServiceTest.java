@@ -67,7 +67,7 @@ class StorageServiceTest {
         verify(minioPublicClient).getPresignedObjectUrl(captor.capture());
 
         assertThat(url).startsWith(PUBLIC_URL);
-        assertThat(StorageService.THUMBNAIL_EXPIRY_SECONDS).isLessThanOrEqualTo(900);
+        assertThat(captor.getValue().expiry()).isEqualTo(StorageService.THUMBNAIL_EXPIRY_SECONDS);
     }
 
     @Test
@@ -84,7 +84,7 @@ class StorageServiceTest {
         verify(minioPublicClient).getPresignedObjectUrl(captor.capture());
 
         assertThat(url).startsWith(PUBLIC_URL);
-        assertThat(StorageService.ORIGINAL_EXPIRY_SECONDS).isLessThanOrEqualTo(3600);
+        assertThat(captor.getValue().expiry()).isEqualTo(StorageService.ORIGINAL_EXPIRY_SECONDS);
     }
 
     @Test
@@ -141,6 +141,19 @@ class StorageServiceTest {
 
         verify(minioInternalClient).removeObject(any(RemoveObjectArgs.class));
         verify(minioPublicClient, never()).removeObject(any(RemoveObjectArgs.class));
+    }
+
+    @Test
+    void download_usesInternalClientOnly() throws Exception {
+        // GetObjectResponse is not easily mockable; wrap in try/catch and verify client interaction
+        try {
+            storageService.download("user1/originals/photo1.jpg");
+        } catch (StorageService.StorageException e) {
+            // Expected: minioInternalClient mock returns null, causing failure inside the SDK
+        }
+
+        verify(minioInternalClient).getObject(any(GetObjectArgs.class));
+        verify(minioPublicClient, never()).getObject(any(GetObjectArgs.class));
     }
 
     // -------------------------------------------------------------------------
