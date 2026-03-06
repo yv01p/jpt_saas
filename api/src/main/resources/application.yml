@@ -40,6 +40,10 @@ spring:
       url: ${REDIS_URL:redis://localhost:6379}
       password: ${REDIS_PASSWORD:}
 
+jpt:
+  trash:
+    retention-days: 30
+
 app:
   jwt-secret: ${JWT_SECRET}
   jwt-expiry-minutes: 15

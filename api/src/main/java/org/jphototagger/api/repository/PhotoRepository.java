@@ -7,8 +7,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
 
 public interface PhotoRepository extends JpaRepository<Photo, UUID> {
 
@@ -34,6 +37,23 @@ public interface PhotoRepository extends JpaRepository<Photo, UUID> {
     Page<Photo> searchByText(@Param("userId") UUID userId,
                              @Param("query") String query,
                              Pageable pageable);
+
+    /**
+     * Returns up to 500 photos eligible for permanent deletion (soft-deleted before cutoff).
+     * Always query at page 0 — deleted rows are gone, so the next call naturally returns the next batch.
+     * LIMIT 500 is embedded in the SQL; no Pageable is used to avoid Hibernate adding FETCH FIRST.
+     */
+    @Query(value = "SELECT * FROM photos WHERE deleted_at < :cutoff AND storage_key IS NOT NULL"
+            + " ORDER BY deleted_at ASC LIMIT 500",
+            nativeQuery = true)
+    List<Photo> findPurgeableBatch(@Param("cutoff") Instant cutoff);
+
+    /**
+     * Returns all photos belonging to a user that have a non-null storage_key.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.userId = :userId AND p.storageKey IS NOT NULL")
+    List<Photo> findAllByUserIdWithStorageKey(@Param("userId") UUID userId);
+
 
     Optional<Photo> findByUserIdAndContentHash(UUID userId, String contentHash);
 

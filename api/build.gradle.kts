@@ -49,6 +49,10 @@ dependencies {
     // Rate limiting (Lettuce — Spring Boot default Redis client)
     implementation(libs.bucket4j.lettuce)
 
+    // Distributed scheduler lock
+    implementation("net.javacrumbs.shedlock:shedlock-spring:6.6.0")
+    implementation("net.javacrumbs.shedlock:shedlock-provider-redis-spring:6.6.0")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
