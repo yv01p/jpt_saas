@@ -22,6 +22,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -170,10 +171,10 @@ class PhotoControllerTest {
 
     @Test
     void upload_concurrentDuplicatesHandledByDbConstraint() throws Exception {
-        // assert HTTP 409 when UniqueConstraintViolationException is caught from concurrent insert
-        // This test simulates the scenario where a concurrent insert causes a DB unique constraint
-        // violation (the partial unique index photos_user_content_hash_active_idx).
-        // We pre-insert a photo with the same content_hash to trigger the constraint from the DB layer.
+        // assert HTTP 409 when DataIntegrityViolationException is caught from concurrent insert.
+        // Note: this test exercises the application fast-path dedup check (findByUserIdAndContentHash).
+        // The DB partial unique index (photos_user_content_hash_active_idx) is the safety net for
+        // true concurrent requests that slip through the fast-path check simultaneously.
         UUID userId = createVerifiedUser("upload-concurrent@test.com", 0);
         byte[] jpegBytes = minimalJpegBytes();
         String hash = sha256Hex(jpegBytes);
@@ -343,8 +344,10 @@ class PhotoControllerTest {
 
     @Test
     void upload_sanitizesOriginalFilenameForDisplay() throws Exception {
-        // assert that a filename containing "<script>alert(1)</script>.jpg" is stripped to
-        // "alert(1).jpg" (or similar plain text) before being written to photos.original_filename
+        // assert that a filename containing "<script>alert(1)</script>.jpg" has all HTML stripped
+        // before being written to photos.original_filename.
+        // Jsoup.parse("<script>alert(1)</script>.jpg").text() → ".jpg" (script content discarded).
+        // The key assertion is that "script" and "alert" do not appear in the stored original_filename.
         UUID userId = createVerifiedUser("upload-sanitize@test.com", 0);
         when(storageService.originalKey(any(), any(), anyString())).thenReturn("key/safe.jpg");
 
@@ -358,15 +361,28 @@ class PhotoControllerTest {
                         .cookie(jwtCookie(userId)))
                 .andExpect(status().isOk());
 
-        // Verify original_filename in DB does not contain script tags
+        // Verify original_filename in DB does not contain script tags or script body.
+        // Jsoup.parse("<script>alert(1)</script>.jpg").text() → ".jpg": script element content
+        // is discarded entirely, leaving only the trailing text node after the closing tag.
         String originalFilename = jdbcTemplate.queryForObject(
                 "SELECT original_filename FROM photos WHERE user_id = ?", String.class, userId);
         assertThat(originalFilename).doesNotContain("<script>");
         assertThat(originalFilename).doesNotContain("</script>");
-        // Jsoup.parse().text() treats <script> as a script element and strips its contents entirely.
-        // The resulting filename is ".jpg" (the text node after the closing tag).
-        // This is the expected behavior: no executable content leaks into original_filename.
         assertThat(originalFilename).doesNotContain("alert");
+    }
+
+    @Test
+    void upload_rejectsUnsupportedMimeType() throws Exception {
+        // assert HTTP 415 when uploaded file has non-image magic bytes (e.g., PDF header)
+        UUID userId = createVerifiedUser("unsupported@test.com", 0);
+        byte[] pdfBytes = "%PDF-1.4 test content".getBytes(StandardCharsets.UTF_8);
+        MockMultipartFile pdfFile = new MockMultipartFile("file", "test.pdf", "application/pdf", pdfBytes);
+
+        mockMvc.perform(multipart("/photos/upload")
+                        .file(pdfFile)
+                        .with(csrf())
+                        .cookie(jwtCookie(userId)))
+                .andExpect(status().isUnsupportedMediaType());
     }
 
     // -------------------------------------------------------------------------

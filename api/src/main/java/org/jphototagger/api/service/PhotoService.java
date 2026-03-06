@@ -8,6 +8,7 @@ import org.jphototagger.api.entity.User;
 import org.jphototagger.api.enums.ProcessingStatus;
 import org.jphototagger.api.exception.EmailVerificationRequiredException;
 import org.jphototagger.api.exception.QuotaExceededException;
+import org.jphototagger.api.exception.UnsupportedMediaTypeException;
 import org.jphototagger.api.repository.PhotoRepository;
 import org.jphototagger.api.repository.UserRepository;
 import org.jsoup.Jsoup;
@@ -108,7 +109,6 @@ public class PhotoService {
 
             return doUpload(userId, file, uploadTemp, contentHash, fileSize);
         } catch (Exception e) {
-            silentlyDelete(uploadTemp);
             // Re-throw known exception types without wrapping
             if (e instanceof EmailVerificationRequiredException
                     || e instanceof QuotaExceededException
@@ -172,8 +172,16 @@ public class PhotoService {
         Photo finalPhoto = self.updateStorageKey(savedPhoto.getId(), objectKey);
 
         // Step 7 (no tx): Enqueue Redis job
-        Map<String, String> message = Map.of("photo_id", finalPhoto.getId().toString());
-        redisTemplate.opsForStream().add("photo-jobs", message);
+        try {
+            Map<String, String> message = Map.of("photo_id", finalPhoto.getId().toString());
+            redisTemplate.opsForStream().add("photo-jobs", message);
+        } catch (Exception e) {
+            log.error("CRITICAL: Redis XADD failed for photo_id={}. Photo is uploaded and quota " +
+                      "charged but worker job was not enqueued. Manual intervention required.",
+                      finalPhoto.getId(), e);
+            // Do NOT rethrow — the photo was successfully saved; return it to the client.
+            // The startup recovery scan can re-enqueue by scanning PENDING photos with storage_key set.
+        }
 
         return finalPhoto;
     }
@@ -308,14 +316,8 @@ public class PhotoService {
     }
 
     // -------------------------------------------------------------------------
-    // Inner exception and helpers
+    // Helpers
     // -------------------------------------------------------------------------
-
-    public static class UnsupportedMediaTypeException extends RuntimeException {
-        public UnsupportedMediaTypeException(String message) {
-            super(message);
-        }
-    }
 
     private void silentlyDelete(Path path) {
         try {
