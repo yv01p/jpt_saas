@@ -2,11 +2,14 @@ package org.jphototagger.api.security;
 
 import jakarta.servlet.http.Cookie;
 import org.jphototagger.api.config.TestRedisConfig;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -16,8 +19,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.Set;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,11 +51,22 @@ class RateLimitFilterTest {
         registry.add("spring.auth-datasource.url", pg::getJdbcUrl);
         registry.add("spring.auth-datasource.username", pg::getUsername);
         registry.add("spring.auth-datasource.password", pg::getPassword);
+        registry.add("app.rate-limit.auth", () -> "3");
+        registry.add("app.rate-limit.general", () -> "5");
     }
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired JwtService jwtService;
+    @Autowired StringRedisTemplate redisTemplate;
+
+    @BeforeEach
+    void cleanRedis() {
+        Set<String> keys = redisTemplate.keys("*");
+        if (keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
+    }
 
     private Cookie jwtCookie(UUID userId) {
         String token = jwtService.generateToken(userId, userId + "@test.com");
@@ -82,6 +98,47 @@ class RateLimitFilterTest {
         mockMvc.perform(post("/photos")
                         .with(csrf())
                         .cookie(jwt))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.error").value("Too Many Requests"));
+    }
+
+    @Test
+    void authEndpointRateLimitRejects4thLoginAttemptFromSameIp() throws Exception {
+        // app.rate-limit.auth=3 (via @DynamicPropertySource) — IP-keyed, no JWT needed
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(post("/auth/login")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{}"))
+                    .andExpect(status().is(not(429)));
+        }
+
+        // 4th attempt from same IP (127.0.0.1 in MockMvc) must be rate limited
+        mockMvc.perform(post("/auth/login")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.error").value("Too Many Requests"));
+    }
+
+    @Test
+    void authEndpointRateLimitAlsoAppliesToRegisterEndpoint() throws Exception {
+        // The IP bucket is shared across all /auth/ paths
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(post("/auth/register")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{}"))
+                    .andExpect(status().is(not(429)));
+        }
+
+        mockMvc.perform(post("/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.error").value("Too Many Requests"));

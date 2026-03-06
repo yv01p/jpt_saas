@@ -1,10 +1,12 @@
 package org.jphototagger.api.repository;
 
+import org.jphototagger.api.config.TestRedisConfig;
 import org.jphototagger.api.entity.Photo;
 import org.jphototagger.api.entity.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
@@ -25,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @Testcontainers
 @Transactional
+@Import(TestRedisConfig.class)
 class PhotoRepositoryTest {
 
     @Container

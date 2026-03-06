@@ -71,6 +71,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                      FilterChain filterChain) throws ServletException, IOException {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof UUID userId)) {
+            if (isAuthEndpoint(request)) {
+                String clientIp = getClientIp(request);
+                ConsumptionProbe probe = proxyManager.builder()
+                        .build("rate:auth:" + clientIp, this::authBucketConfig)
+                        .tryConsumeAndReturnRemaining(1);
+                if (!probe.isConsumed()) {
+                    long retryAfterSeconds = Math.max(1,
+                            (probe.getNanosToWaitForRefill() + 999_999_999) / 1_000_000_000);
+                    response.setContentType("application/json");
+                    response.setStatus(429);
+                    response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));
+                    response.getWriter().write("{\"error\":\"Too Many Requests\",\"status\":429}");
+                    return;
+                }
+            }
             filterChain.doFilter(request, response);
             return;
         }
@@ -99,6 +114,28 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isAuthEndpoint(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/auth/");
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            String[] parts = forwarded.split(",");
+            return parts[parts.length - 1].trim();
+        }
+        return request.getRemoteAddr();
+    }
+
+    private BucketConfiguration authBucketConfig() {
+        return BucketConfiguration.builder()
+                .addLimit(Bandwidth.builder()
+                        .capacity(rateLimitConfig.getAuth())
+                        .refillGreedy(rateLimitConfig.getAuth(), Duration.ofHours(1))
+                        .build())
+                .build();
     }
 
     private boolean isUploadRequest(HttpServletRequest request) {

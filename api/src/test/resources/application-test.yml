@@ -4,8 +4,9 @@ app:
   jwt-expiry-minutes: 15
   refresh-token-expiry-days: 1  # short TTL for expiry tests
   rate-limit:
-    upload: 3       # low limits for fast test execution
-    general: 5
+    upload: 3       # low limits for fast test execution (RateLimitFilterTest relies on this)
+    general: 100    # high enough for CRUD tests; RateLimitFilterTest overrides to 5 via @DynamicPropertySource
+    auth: 20        # high enough not to break AuthControllerTest (RateLimitFilterTest overrides to 3)
 
 spring:
   datasource:

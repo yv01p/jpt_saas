@@ -57,13 +57,13 @@ class SecurityTest {
     }
 
     @Test
-    void authenticatedRequestToProtectedPathReturns404WhenNoController() throws Exception {
-        // No PhotoController exists yet, so an authenticated request to /photos
-        // should pass security (not 401) but get 404 (no handler mapped).
+    void authenticatedRequestToUnmappedPathReturns404() throws Exception {
+        // An authenticated request to a path with no controller should pass security
+        // (not 401) but get 404 (no handler mapped).
         UUID userId = UUID.randomUUID();
         String token = jwtService.generateToken(userId, "test@example.com");
 
-        mockMvc.perform(get("/photos").cookie(new Cookie("jwt", token)))
+        mockMvc.perform(get("/no-such-endpoint-xyz").cookie(new Cookie("jwt", token)))
                 .andExpect(status().isNotFound());
     }
 

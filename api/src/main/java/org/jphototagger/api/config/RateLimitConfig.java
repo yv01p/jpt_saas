@@ -9,6 +9,7 @@ public class RateLimitConfig {
 
     private int upload = 100;
     private int general = 1000;
+    private int auth = 20;
 
     public int getUpload() {
         return upload;
@@ -24,5 +25,13 @@ public class RateLimitConfig {
 
     public void setGeneral(int general) {
         this.general = general;
+    }
+
+    public int getAuth() {
+        return auth;
+    }
+
+    public void setAuth(int auth) {
+        this.auth = auth;
     }
 }
