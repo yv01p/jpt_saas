@@ -152,6 +152,10 @@ React Dropzone with drag & drop. Progress indicator. Error handling for 409 (dup
 
 Multipart upload + poll `/api/photos/{id}/status` every 3 seconds until `done` or `failed`.
 
+**FAILED status handling (SA2-F2):** When status transitions to `failed`, display a specific, actionable message in the upload UI — not a generic error label. The `/api/photos/{id}/status` response includes a `failureReason` field (populated by the worker on terminal failure; null otherwise). Map known reason codes to user-readable strings; fall back to the generic message for unrecognised codes. Example messages by failure type:
+- Metadata extraction failure: `"Processing failed — the file's metadata could not be read. Try re-uploading or check the file is a valid image."`
+- Unknown/generic failure: `"Processing failed — try re-uploading. If the problem persists, contact support."`
+
 **Step 4: Run tests, verify pass**
 
 **Step 5: Commit**
@@ -175,6 +179,8 @@ Full-size photo view via pre-signed original URL. Metadata panel sidebar.
 **Step 3: Implement MetadataPanel**
 
 Display EXIF, IPTC, XMP data in organized tabs/sections. GPS display controlled by user setting.
+
+**Security requirement — safe EXIF rendering (SA2-F1):** All fields rendered from `photo_metadata.exif_data` JSONB — including but not limited to `UserComment`, `ImageDescription`, `Artist`, `Copyright`, `XMP:Description`, `XMP:Title`, `XMP:Rights`, `IPTC:Keywords`, `IPTC:ObjectName`, and `GPS:GPSAreaInformation` — must be rendered exclusively via React text nodes (`{value}`). Never use `dangerouslySetInnerHTML`, a Markdown renderer, or `.innerHTML` for any EXIF field, regardless of source. This applies equally to the `caption`, `title`, and `description` fields on the `photos` object. Phase 3 sanitizes all EXIF string values at write time (Jsoup strip on every string field in `exif_data`), but defense-in-depth requires the render path to be safe independently.
 
 **Step 4: Run tests, verify pass**
 
@@ -228,6 +234,14 @@ git commit -m "feat: keywords, albums, search, trash pages"
 **Step 2: Implement SettingsPage**
 
 Account info, storage usage vs quota, linked OAuth accounts, GPS display preference.
+
+**Quota display (SA2-F4):** The quota meter reads `usedBytes` from the API, which reflects Phase 3's `used_bytes` column. Apply a floor guard in the display layer as defense-in-depth against any transient inconsistency:
+
+```typescript
+const usedBytes = Math.max(0, quota.usedBytes)
+```
+
+Display as `"X GB of Y GB used"` using `usedBytes` — this ensures the UI never renders a negative storage value. Correctness of `used_bytes` is enforced at the Phase 3 write path (`GREATEST(0, ...)` on all decrement paths + `CHECK (used_bytes >= 0)` DB constraint); the frontend guard is a last-resort safety net only.
 
 **Step 3: Run tests, verify pass**
 
