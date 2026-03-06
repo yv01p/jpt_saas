@@ -1,6 +1,5 @@
 package org.jphototagger.worker.pipeline;
 
-import org.apache.tika.Tika;
 import org.jphototagger.api.entity.Photo;
 import org.jphototagger.api.enums.ProcessingStatus;
 import org.jphototagger.api.repository.PhotoRepository;
@@ -9,6 +8,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 /**
@@ -35,7 +38,6 @@ public class ImageProcessor {
     private final TikaValidator tikaValidator;
     private final ThumbnailGenerator thumbnailGenerator;
     private final MetadataExtractor metadataExtractor;
-    private final Tika tika = new Tika();
 
     public ImageProcessor(PhotoRepository photoRepository,
                           TikaValidator tikaValidator,
@@ -71,59 +73,59 @@ public class ImageProcessor {
                 ? storageKey.substring(storageKey.lastIndexOf('.') + 1)
                 : "jpg";
 
-        // Derive MIME type from extension for validation and RAW detection
-        String mimeType = extToMime(ext);
-
-        // Step 2: Validate MIME type
+        // Download the original once to tmpfs; reuse for both Tika validation,
+        // thumbnail generation, and metadata extraction (avoids triple download).
+        Path tmpOriginal = null;
         try {
-            tikaValidator.validateMimeType(mimeType);
-        } catch (ProcessingException e) {
+            tmpOriginal = File.createTempFile(
+                    photoId.toString(), "." + ext, new File("/tmp")).toPath();
+        } catch (IOException e) {
             markFailed(photo);
-            throw e;
+            throw new ProcessingException("Failed to create temp file for photo " + photoId, e);
         }
 
-        // Mark as processing
-        photo.setProcessingStatus(ProcessingStatus.PROCESSING);
-        photoRepository.save(photo);
-
         try {
-            // Step 3 + 4: Generate thumbnails (handles RAW internally)
-            thumbnailGenerator.generate(photoId, userId, storageKey, mimeType);
+            thumbnailGenerator.downloadFromMinio(storageKey, tmpOriginal);
 
-            // Step 5: Extract metadata — use a temp path; MetadataExtractor
-            // downloads separately from MinIO for its own read.
-            // We pass the storageKey so it can resolve the file; the extractor
-            // receives the tmpFile from ThumbnailGenerator's already-downloaded copy
-            // in a shared context — but since ThumbnailGenerator cleans up, we pass
-            // storageKey as a sentinel and MetadataExtractor downloads its own copy.
-            // For simplicity and correctness, create a temp file path for the extractor.
-            java.nio.file.Path tmpForMeta = null;
+            // Step 2: Content-based MIME detection via Tika — validates actual file bytes.
+            String mimeType;
             try {
-                tmpForMeta = java.nio.file.Files.createTempFile(
-                        java.nio.file.Path.of("/tmp"), photoId.toString(), "." + ext);
-                thumbnailGenerator.downloadFromMinio(storageKey, tmpForMeta);
-                metadataExtractor.extract(photoId, userId, tmpForMeta);
-            } finally {
-                if (tmpForMeta != null) {
-                    try {
-                        java.nio.file.Files.deleteIfExists(tmpForMeta);
-                    } catch (java.io.IOException e) {
-                        log.warn("Failed to delete metadata temp file: {}", tmpForMeta, e);
-                    }
-                }
+                mimeType = tikaValidator.detectAndValidate(tmpOriginal);
+            } catch (ProcessingException e) {
+                markFailed(photo);
+                throw e;
             }
 
-            // Step 6: Mark DONE
-            photo.setProcessingStatus(ProcessingStatus.DONE);
+            // Mark as processing
+            photo.setProcessingStatus(ProcessingStatus.PROCESSING);
             photoRepository.save(photo);
-            log.info("Photo {} processed successfully", photoId);
 
-        } catch (ProcessingException e) {
-            markFailed(photo);
-            throw e;
-        } catch (Exception e) {
-            markFailed(photo);
-            throw new ProcessingException("Unexpected error processing photo " + photoId, e);
+            try {
+                // Step 3: Generate thumbnails (ThumbnailGenerator downloads its own copy)
+                thumbnailGenerator.generate(photoId, userId, storageKey, mimeType);
+
+                // Step 4: Extract metadata from the already-downloaded local file
+                metadataExtractor.extract(photoId, userId, tmpOriginal);
+
+                // Step 5: Mark DONE
+                photo.setProcessingStatus(ProcessingStatus.DONE);
+                photoRepository.save(photo);
+                log.info("Photo {} processed successfully", photoId);
+
+            } catch (ProcessingException e) {
+                markFailed(photo);
+                throw e;
+            } catch (Exception e) {
+                markFailed(photo);
+                throw new ProcessingException("Unexpected error processing photo " + photoId, e);
+            }
+
+        } finally {
+            try {
+                Files.deleteIfExists(tmpOriginal);
+            } catch (IOException e) {
+                log.warn("Failed to delete temp file: {}", tmpOriginal, e);
+            }
         }
     }
 
@@ -136,22 +138,4 @@ public class ImageProcessor {
         }
     }
 
-    /**
-     * Maps a file extension to a MIME type for pipeline routing.
-     * Falls back to {@code image/jpeg} for unknown extensions.
-     */
-    private String extToMime(String ext) {
-        return switch (ext.toLowerCase()) {
-            case "jpg", "jpeg" -> "image/jpeg";
-            case "png"         -> "image/png";
-            case "tiff", "tif" -> "image/tiff";
-            case "cr2"         -> "image/x-canon-cr2";
-            case "nef"         -> "image/x-nikon-nef";
-            case "arw"         -> "image/x-sony-arw";
-            case "dng"         -> "image/x-adobe-dng";
-            case "heic"        -> "image/heic";
-            case "webp"        -> "image/webp";
-            default            -> "image/jpeg";
-        };
-    }
 }

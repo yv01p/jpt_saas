@@ -42,6 +42,30 @@ public class TikaValidator {
     }
 
     /**
+     * Detects the MIME type of the given file, throws {@link ProcessingException} if it is
+     * not an image type, and returns the detected MIME type string for downstream use
+     * (e.g. to decide whether RAW pre-processing is required).
+     *
+     * @param file the file to validate
+     * @return the detected MIME type (always starts with {@code image/})
+     * @throws ProcessingException if the MIME type does not start with {@code image/}
+     */
+    public String detectAndValidate(Path file) {
+        String mimeType;
+        try {
+            mimeType = tika.detect(file.toFile());
+        } catch (IOException e) {
+            throw new ProcessingException("Failed to detect MIME type for file: " + file, e);
+        }
+        if (!mimeType.startsWith("image/")) {
+            throw new ProcessingException(
+                    "Rejected non-image content type: " + mimeType + " for file: " + file);
+        }
+        log.debug("TikaValidator accepted MIME type: {} for file: {}", mimeType, file);
+        return mimeType;
+    }
+
+    /**
      * Validates a MIME type string directly (without reading a file).
      *
      * @param mimeType the MIME type to validate

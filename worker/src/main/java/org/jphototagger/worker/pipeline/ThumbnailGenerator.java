@@ -145,15 +145,19 @@ public class ThumbnailGenerator {
     void extractRawToJpeg(Path rawFile, Path jpegOutput, UUID photoId) {
         int timeout = workerProperties.getProcess().getTimeoutMinutes();
         try {
-            // dcraw_emu -e extracts the embedded thumbnail; output file is rawFile.thumb.jpg
-            // We redirect output to our desired path by pointing dcraw_emu at the input and
-            // then moving the result.
-            Path thumbFile = rawFile.resolveSibling(rawFile.getFileName() + ".thumb.jpg");
+            // dcraw_emu -e extracts the embedded thumbnail.
+            // The output filename is <stem>.thumb.jpg where <stem> is the input filename
+            // without its extension (e.g. /tmp/UUID.cr2 → /tmp/UUID.thumb.jpg).
+            String baseName = rawFile.getFileName().toString();
+            int dotIdx = baseName.lastIndexOf('.');
+            String stem = dotIdx > 0 ? baseName.substring(0, dotIdx) : baseName;
+            Path thumbFile = rawFile.resolveSibling(stem + ".thumb.jpg");
+            // Do NOT pass -T: that flag outputs TIFF and must not be combined with -e.
             ProcessBuilder pb = new ProcessBuilder(
-                    "dcraw_emu", "-e", "-T", rawFile.toString());
+                    "dcraw_emu", "-e", rawFile.toString());
             pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process process = pb.start();
+            Process process = startProcess(pb);
             boolean completed = process.waitFor(timeout, TimeUnit.MINUTES);
             if (!completed) {
                 process.destroyForcibly();
