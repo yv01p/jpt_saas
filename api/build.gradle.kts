@@ -18,6 +18,11 @@ tasks.bootJar {
     archiveFileName.set("app.jar")
 }
 
+// Re-enable the plain jar so the worker module can consume api's entities/repositories
+tasks.jar {
+    enabled = true
+}
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-aop")

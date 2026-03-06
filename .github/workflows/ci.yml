@@ -1,0 +1,37 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy SBOM vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scanners: vuln
+          format: sarif
+          output: trivy-results.sarif
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  trivy-docker-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build worker image
+        run: docker build -t worker:ci ./worker
+      - name: Scan worker image for HIGH/CRITICAL CVEs
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: worker:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL

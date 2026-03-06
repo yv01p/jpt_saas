@@ -1,10 +1,11 @@
 FROM eclipse-temurin:21-jre-alpine
 
 RUN apk add --no-cache \
-    libraw-utils \
-    vips-tools \
-    perl perl-image-exiftool \
-    tini
+    libraw-tools=0.21.4-r2 \
+    vips-tools=8.17.3-r1 \
+    perl=5.42.0-r0 \
+    perl-image-exiftool=13.36-r0 \
+    tini=0.19.0-r3
 
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
 

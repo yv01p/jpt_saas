@@ -703,7 +703,7 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:size=512M    # Working directory for image processing
+      - /tmp:size=${WORKER_TMPFS_SIZE:-1g},mode=1777
 
   postgres:
     image: postgres:16

@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":lib"))
     implementation(project(":jpt-api"))
+    implementation(project(":api"))
 
     implementation("org.springframework.boot:spring-boot-starter")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -29,6 +30,8 @@ dependencies {
     implementation("org.postgresql:postgresql")
     implementation(libs.minio)
     implementation(libs.tika.core)
+    implementation(libs.metadata.extractor)
+    implementation(libs.jsoup)
     implementation("io.micrometer:micrometer-registry-prometheus")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")

@@ -7,6 +7,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
@@ -32,6 +33,9 @@ public class PhotoMetadata {
     @Column(name = "xmp_data", columnDefinition = "jsonb")
     private String xmpData;
 
+    @Column(name = "extracted_at")
+    private Instant extractedAt;
+
     public UUID getPhotoId() { return photoId; }
     public void setPhotoId(UUID photoId) { this.photoId = photoId; }
 
@@ -46,6 +50,9 @@ public class PhotoMetadata {
 
     public String getXmpData() { return xmpData; }
     public void setXmpData(String xmpData) { this.xmpData = xmpData; }
+
+    public Instant getExtractedAt() { return extractedAt; }
+    public void setExtractedAt(Instant extractedAt) { this.extractedAt = extractedAt; }
 
     @Override
     public boolean equals(Object o) {
