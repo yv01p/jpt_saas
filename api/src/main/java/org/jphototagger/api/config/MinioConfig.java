@@ -13,7 +13,8 @@ import org.springframework.context.annotation.Configuration;
  *   <li>{@code minioPublicClient} — connects to the Nginx-proxied public URL.
  *       Used <em>only</em> for pre-signed URL generation so that URLs returned
  *       to browsers begin with the public hostname, not the internal one.
- *       Never used for actual data I/O.</li>
+ *       Carries a presign-only IAM user with an empty policy (no S3 permissions).
+ *       MUST NEVER be used for actual data I/O operations.</li>
  * </ul>
  *
  * The MinIO Java SDK generates pre-signed URLs against whatever endpoint the
@@ -34,6 +35,13 @@ public class MinioConfig {
     @Value("${minio.secret-key}")
     private String secretKey;
 
+    /** Credentials for the presign-only IAM user — empty policy, no S3 data access. */
+    @Value("${minio.presign-access-key}")
+    private String presignAccessKey;
+
+    @Value("${minio.presign-secret-key}")
+    private String presignSecretKey;
+
     @Bean("minioInternalClient")
     public MinioClient minioInternalClient() {
         return MinioClient.builder()
@@ -42,11 +50,16 @@ public class MinioConfig {
                 .build();
     }
 
+    /**
+     * Pre-sign-only client. Carries an empty-policy IAM user — no GetObject/PutObject/DeleteObject
+     * permission. Use only for {@code getPresignedObjectUrl()} (pure HMAC computation).
+     * Do not pass this bean to any code path that calls I/O methods.
+     */
     @Bean("minioPublicClient")
     public MinioClient minioPublicClient() {
         return MinioClient.builder()
                 .endpoint(publicUrl)
-                .credentials(accessKey, secretKey)
+                .credentials(presignAccessKey, presignSecretKey)
                 .build();
     }
 }

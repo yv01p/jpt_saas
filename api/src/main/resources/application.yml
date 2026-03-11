@@ -38,7 +38,7 @@ spring:
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
-      password: ${REDIS_PASSWORD:}
+      password: ${REDIS_PASSWORD}
 
 jpt:
   trash:
@@ -55,6 +55,11 @@ app:
     auth: 20          # auth attempts per hour per IP
   default-share-days: 30
 
+server:
+  error:
+    include-stacktrace: never   # SA4-F3: never expose stack traces to clients
+    include-message: never      # SA4-F3: never expose raw exception messages to clients
+
 management:
   endpoints:
     web:
@@ -69,4 +74,6 @@ minio:
   public-url: ${MINIO_PUBLIC_URL:http://localhost:9000}
   access-key: ${MINIO_ACCESS_KEY}
   secret-key: ${MINIO_SECRET_KEY}
+  presign-access-key: ${MINIO_PRESIGN_ACCESS_KEY}
+  presign-secret-key: ${MINIO_PRESIGN_SECRET_KEY}
   bucket: jpt-photos

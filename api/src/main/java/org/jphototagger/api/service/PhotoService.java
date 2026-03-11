@@ -259,24 +259,26 @@ public class PhotoService {
 
     @Transactional(readOnly = true)
     public Photo getPhotoStatus(UUID userId, UUID photoId) {
-        Photo photo = photoRepository.findById(photoId)
-                .filter(p -> p.getDeletedAt() == null)
+        return photoRepository.findById(photoId)
+                .filter(p -> p.getUserId().equals(userId) && p.getDeletedAt() == null)
                 .orElseThrow(() -> new EntityNotFoundException("Photo not found"));
-        if (!photo.getUserId().equals(userId)) {
-            throw new org.springframework.security.access.AccessDeniedException("Access denied");
-        }
-        return photo;
     }
 
     @Transactional
     public void softDelete(UUID userId, UUID photoId) {
-        Photo photo = getPhoto(userId, photoId);
-
+        // Lock user row FIRST to serialize concurrent soft-deletes for this user.
+        // Re-reading the photo inside the lock ensures a second concurrent request
+        // sees the already-deleted state and throws EntityNotFoundException rather
+        // than decrementing used_bytes a second time.
         User user = entityManager.createQuery(
                 "SELECT u FROM User u WHERE u.id = :userId", User.class)
                 .setParameter("userId", userId)
                 .setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
                 .getSingleResult();
+
+        Photo photo = photoRepository.findById(photoId)
+                .filter(p -> p.getUserId().equals(userId) && p.getDeletedAt() == null)
+                .orElseThrow(() -> new EntityNotFoundException("Photo not found"));
 
         photo.setDeletedAt(Instant.now());
         photoRepository.save(photo);

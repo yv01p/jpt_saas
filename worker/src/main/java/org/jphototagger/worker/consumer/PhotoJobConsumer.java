@@ -23,6 +23,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -179,7 +182,7 @@ public class PhotoJobConsumer {
             photoId = UUID.fromString(photoIdStr);
         } catch (IllegalArgumentException e) {
             log.error("Received message {} with invalid photo_id '{}' — XACK and skip",
-                    messageId, photoIdStr);
+                    messageId, sanitizeForLog(photoIdStr));
             redisCommands.xack(STREAM, GROUP, messageId);
             return;
         }
@@ -256,7 +259,12 @@ public class PhotoJobConsumer {
                 log.error("Failed to mark photo {} as FAILED in DB", photoId, ex);
             }
             redisCommands.xack(STREAM, GROUP, messageId);
-            // Optionally write to dead-letter stream for inspection
+            // Write to dead-letter stream for operator inspection.
+            // The dead-letter stream has no consumer — inspect it manually:
+            //   XLEN dead-letter
+            //   XRANGE dead-letter - + COUNT 10
+            // For production alerting, expose XLEN as a Micrometer gauge and set
+            // a threshold-based alert in your monitoring system.
             try {
                 redisCommands.xadd("dead-letter", Map.of(
                         "photo_id", photoId.toString(),
@@ -383,12 +391,24 @@ public class PhotoJobConsumer {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Log sanitization (SA4-F7)
+    // -------------------------------------------------------------------------
+
+    /** Strips newlines and control characters from Redis-sourced values before logging. */
+    private static String sanitizeForLog(String s) {
+        return s == null ? "<null>" : s.replaceAll("[\r\n\t]", "_").replaceAll("[\u001B\\p{Cntrl}]", "?");
+    }
+
     /**
      * Paginates the full PEL for {@code STREAM}/{@code GROUP}, collecting all
      * {@code photo_id} values into a set for O(1) deduplication.
      *
      * <p>Uses page size of 1000 to handle large-scale outages correctly.
      * COUNT 100 would miss PEL entries beyond position 100.
+     *
+     * <p>Each PEL page is resolved via a single batched {@code XRANGE minId maxId COUNT pageSize}
+     * call, reducing round-trips from O(N) per entry to O(N/1000) per page.
      */
     private Set<String> paginatePel() {
         Set<String> pelPhotoIds = new HashSet<>();
@@ -404,12 +424,9 @@ public class PhotoJobConsumer {
                     range,
                     Limit.from(PEL_PAGE_SIZE));
 
-            for (PendingMessage msg : page) {
-                // The PEL tracks delivery metadata (message ID, consumer, idle time, count)
-                // but not the message body. We do a targeted XRANGE to fetch the photo_id
-                // field from the body of each PEL entry, then store those photo_id values
-                // in the set used for deduplication during the re-enqueue scan.
-                fetchPhotoIdFromStream(msg.getId()).ifPresent(pelPhotoIds::add);
+            if (!page.isEmpty()) {
+                // Batch-fetch photo_ids for the entire page with one XRANGE round-trip.
+                pelPhotoIds.addAll(fetchPhotoIdsFromStreamBatch(page));
             }
 
             if (!page.isEmpty()) {
@@ -421,22 +438,59 @@ public class PhotoJobConsumer {
     }
 
     /**
-     * Fetches a single stream message by ID to extract its {@code photo_id} field.
+     * Batch-fetches {@code photo_id} values for a page of PEL entries using a single
+     * {@code XRANGE minId maxId COUNT pageSize} round-trip.
+     *
+     * <p>This reduces the O(N) per-entry XRANGE pattern to O(N/1000) — one call per PEL page.
+     * PEL entries whose stream messages are absent (trimmed, or pushed out by non-PEL messages
+     * filling the COUNT window) are logged at WARN and omitted from the result; those photos
+     * are treated as not-in-PEL and may be re-enqueued. Re-enqueue of a photo already in
+     * the PEL is safe: {@code processMessage} detects the DONE/PROCESSING state and skips.
      */
-    private Optional<String> fetchPhotoIdFromStream(String messageId) {
+    private Collection<String> fetchPhotoIdsFromStreamBatch(List<PendingMessage> pelPage) {
+        String minId = pelPage.get(0).getId();
+        String maxId = pelPage.get(pelPage.size() - 1).getId();
+
+        List<StreamMessage<String, String>> streamMessages;
         try {
-            List<StreamMessage<String, String>> msgs = redisCommands.xrange(
+            streamMessages = redisCommands.xrange(
                     STREAM,
-                    Range.create(messageId, messageId));
-            if (msgs != null && !msgs.isEmpty()) {
-                return Optional.ofNullable(msgs.get(0).getBody().get("photo_id"));
-            }
-            log.warn("PEL entry {} has no corresponding stream message (may have been trimmed)" +
-                     " — photo_id will be absent from dedup filter", messageId);
+                    Range.create(minId, maxId),
+                    Limit.from(PEL_PAGE_SIZE));
         } catch (Exception e) {
-            log.warn("Failed to fetch stream message {} for PEL deduplication", messageId, e);
+            log.warn("Batch XRANGE [{}, {}] failed for PEL deduplication — " +
+                     "affected photos may be re-enqueued on recovery", minId, maxId, e);
+            return List.of();
         }
-        return Optional.empty();
+
+        if (streamMessages == null || streamMessages.isEmpty()) {
+            log.warn("Batch XRANGE [{}, {}] returned no messages — PEL entries may be trimmed",
+                    minId, maxId);
+            return List.of();
+        }
+
+        // Build a lookup map: stream message ID → photo_id
+        Map<String, String> idToPhotoId = new HashMap<>();
+        for (StreamMessage<String, String> sm : streamMessages) {
+            String photoId = sm.getBody().get("photo_id");
+            if (photoId != null) {
+                idToPhotoId.put(sm.getId(), photoId);
+            }
+        }
+
+        // Collect photo_ids for PEL entries found in the stream
+        List<String> result = new ArrayList<>();
+        for (PendingMessage pelEntry : pelPage) {
+            String photoId = idToPhotoId.get(pelEntry.getId());
+            if (photoId != null) {
+                result.add(photoId);
+            } else {
+                log.warn("PEL entry {} has no corresponding stream message (may have been trimmed " +
+                         "or not in XRANGE batch window) — photo_id absent from dedup filter",
+                         pelEntry.getId());
+            }
+        }
+        return result;
     }
 
 }

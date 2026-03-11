@@ -144,7 +144,7 @@ public class DeleteJobConsumer {
         // SA2-F5: Null/blank original_key guard — prevents cascading retry storm
         if (originalKey == null || originalKey.isBlank()) {
             log.error("delete-job received with null/blank originalKey — XACK and skip, photo_id={}",
-                    photoId);
+                    sanitizeForLog(photoId));
             redisCommands.xack(STREAM, GROUP, messageId);
             return;
         }
@@ -152,15 +152,18 @@ public class DeleteJobConsumer {
         // SA3-F2: Format validation on original_key
         if (!isValidStorageKey(originalKey)) {
             log.error("delete-job originalKey failed format validation — XACK and skip, " +
-                      "key={}, photo_id={}", originalKey, photoId);
+                      "key={}, photo_id={}", sanitizeForLog(originalKey), sanitizeForLog(photoId));
             redisCommands.xack(STREAM, GROUP, messageId);
             return;
         }
 
-        // Delete original — XACK even if MinIO fails (at-most-once semantics for
-        // delete jobs; MinIO's deleteObject is idempotent and there is no XAUTOCLAIM
-        // retry mechanism on this stream, so orphaning the message forever is worse
-        // than accepting a missed delete).
+        // XACK before deletes — at-most-once semantics: a crash after this point
+        // loses the remaining deletes, which is acceptable (MinIO removeObject is
+        // idempotent and OrphanReconciliationScheduler cleans originals weekly).
+        // A crash before XACK would permanently orphan the PEL entry because there
+        // is no XAUTOCLAIM recovery on this stream.
+        redisCommands.xack(STREAM, GROUP, messageId);
+
         deleteObject(originalKey, photoId, messageId);
 
         // Delete thumbnails — skip if key is invalid (may be absent for photos
@@ -168,17 +171,16 @@ public class DeleteJobConsumer {
         if (isValidStorageKey(thumbnailSm)) {
             deleteObject(thumbnailSm, photoId, messageId);
         } else {
-            log.warn("thumbnail_sm key invalid format — skipping, photo_id={}", photoId);
+            log.warn("thumbnail_sm key invalid format — skipping, photo_id={}", sanitizeForLog(photoId));
         }
 
         if (isValidStorageKey(thumbnailMd)) {
             deleteObject(thumbnailMd, photoId, messageId);
         } else {
-            log.warn("thumbnail_md key invalid format — skipping, photo_id={}", photoId);
+            log.warn("thumbnail_md key invalid format — skipping, photo_id={}", sanitizeForLog(photoId));
         }
 
-        redisCommands.xack(STREAM, GROUP, messageId);
-        log.info("Delete-job completed: photo_id={}, original_key={}", photoId, originalKey);
+        log.info("Delete-job completed: photo_id={}, original_key={}", sanitizeForLog(photoId), originalKey);
     }
 
     // -------------------------------------------------------------------------
@@ -187,8 +189,8 @@ public class DeleteJobConsumer {
 
     /**
      * Attempts to delete a single MinIO object. On failure, logs at ERROR and
-     * continues — XACK will still be issued by the caller so the message is not
-     * permanently orphaned in the PEL (at-most-once semantics for delete jobs).
+     * continues — XACK has already been issued before this method is called
+     * (at-most-once delete semantics).
      */
     private void deleteObject(String key, String photoId, String messageId) {
         try {
@@ -201,9 +203,18 @@ public class DeleteJobConsumer {
         } catch (Exception e) {
             log.error("Failed to delete MinIO object '{}' for photo_id={} (message={}) — " +
                       "XACK will still be issued (at-most-once delete semantics)",
-                      key, photoId, messageId, e);
+                      key, sanitizeForLog(photoId), messageId, e);
             // Do NOT re-throw — caller must be able to XACK the message regardless.
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Log sanitization (SA4-F7)
+    // -------------------------------------------------------------------------
+
+    /** Strips newlines and control characters from Redis-sourced values before logging. */
+    private static String sanitizeForLog(String s) {
+        return s == null ? "<null>" : s.replaceAll("[\r\n\t]", "_").replaceAll("[\u001B\\p{Cntrl}]", "?");
     }
 
     // -------------------------------------------------------------------------

@@ -29,6 +29,8 @@ services:
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL}
       MINIO_ACCESS_KEY: ${MINIO_API_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_API_SECRET_KEY}
+      MINIO_PRESIGN_ACCESS_KEY: ${MINIO_API_PRESIGN_ACCESS_KEY}
+      MINIO_PRESIGN_SECRET_KEY: ${MINIO_API_PRESIGN_SECRET_KEY}
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: ${REDIS_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -99,7 +101,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:cedbd4a3809524b5d1c29fb855a695d9c688f1916ee29c07620ef35efe1d9732
     networks:
       - backend
     environment:
@@ -153,6 +155,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
       MINIO_API_ACCESS_KEY: ${MINIO_API_ACCESS_KEY}
       MINIO_API_SECRET_KEY: ${MINIO_API_SECRET_KEY}
+      MINIO_API_PRESIGN_ACCESS_KEY: ${MINIO_API_PRESIGN_ACCESS_KEY}
+      MINIO_API_PRESIGN_SECRET_KEY: ${MINIO_API_PRESIGN_SECRET_KEY}
       MINIO_WORKER_ACCESS_KEY: ${MINIO_WORKER_ACCESS_KEY}
       MINIO_WORKER_SECRET_KEY: ${MINIO_WORKER_SECRET_KEY}
       MINIO_BACKUP_ACCESS_KEY: ${MINIO_BACKUP_ACCESS_KEY}
@@ -169,6 +173,10 @@ services:
         mc mb --ignore-existing minio/jpt-photos &&
         (mc admin user add minio $$MINIO_API_ACCESS_KEY $$MINIO_API_SECRET_KEY || true) &&
         (mc admin policy attach minio readwrite --user $$MINIO_API_ACCESS_KEY || true) &&
+        echo '{"Version":"2012-10-17","Statement":[]}' > /tmp/presign-only-policy.json &&
+        (mc admin policy create minio presign-only /tmp/presign-only-policy.json || true) &&
+        (mc admin user add minio $$MINIO_API_PRESIGN_ACCESS_KEY $$MINIO_API_PRESIGN_SECRET_KEY || true) &&
+        (mc admin policy attach minio presign-only --user $$MINIO_API_PRESIGN_ACCESS_KEY || true) &&
         echo '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::jpt-photos/*/originals/*","arn:aws:s3:::jpt-photos/*/thumbnails/*"]}]}' > /tmp/worker-policy.json &&
         (mc admin user add minio $$MINIO_WORKER_ACCESS_KEY $$MINIO_WORKER_SECRET_KEY || true) &&
         (mc admin policy create minio worker-scoped-policy /tmp/worker-policy.json || true) &&
@@ -178,7 +186,7 @@ services:
         echo minio-init complete"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:4bfd9eca23339865dc14fe75f6d9ae643f714924623978dd2798f1a673b08f43
     networks:
       - backend
     environment:

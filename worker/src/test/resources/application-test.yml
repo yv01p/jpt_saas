@@ -6,6 +6,7 @@ spring:
     hikari:
       connection-init-sql: "SELECT 1"
   flyway:
+    enabled: true   # tests use Testcontainers and must run migrations to build the schema
     url: jdbc:tc:postgresql:16:///test?TC_DAEMON=true
     user: test
     password: test

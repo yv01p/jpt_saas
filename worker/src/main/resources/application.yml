@@ -12,18 +12,15 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   flyway:
-    enabled: true
-    url: ${FLYWAY_DB_URL:${DB_URL:jdbc:postgresql://localhost:5432/jpt}}
-    user: ${FLYWAY_DB_USER:jpt}
-    password: ${FLYWAY_DB_PASS}
-    placeholders:
-      jpt_app_password: ${DB_PASS}
-      worker_db_user_password: ${WORKER_DB_PASS}
-      jpt_auth_password: ${JPT_AUTH_PASSWORD}
+    enabled: false   # API service owns schema migrations; worker's restricted DB user has no DDL access
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
-      password: ${REDIS_PASSWORD:}
+      password: ${REDIS_PASSWORD}
+  task:
+    scheduling:
+      pool:
+        size: 3   # pollPhotoJobs + pollDeleteJobs + reclaimIdlePhotoJobs
 
 worker:
   streams:

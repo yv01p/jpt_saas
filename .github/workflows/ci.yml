@@ -3,31 +3,42 @@ on: [push, pull_request]
 jobs:
   trivy-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required for github/codeql-action SARIF upload
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Build project
+        run: |
+          export JAVA_HOME=$JAVA_HOME_21_X64
+          ./gradlew :api:build :worker:build -x test
       - name: Run Trivy SBOM vulnerability scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402e8f6e2dc35db4b45b08  # v0.28.0
         with:
           scan-type: fs
           scanners: vuln
           format: sarif
           output: trivy-results.sarif
+          exit-code: '1'
+          severity: HIGH,CRITICAL
       - name: Upload SARIF results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@820e3160e279568db735cee8ed8f8e77a6da7818  # v3.32.6
         with:
           sarif_file: trivy-results.sarif
 
   trivy-docker-worker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
       - name: Build worker image
         run: docker build -t worker:ci ./worker
       - name: Scan worker image for HIGH/CRITICAL CVEs
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402e8f6e2dc35db4b45b08  # v0.28.0
         with:
           image-ref: worker:ci
           format: table

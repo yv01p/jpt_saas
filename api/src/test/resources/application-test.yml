@@ -48,6 +48,8 @@ minio:
   public-url: http://localhost:9000
   access-key: minioadmin
   secret-key: minioadmin
+  presign-access-key: minioadmin
+  presign-secret-key: minioadmin
   bucket: jpt-photos
 
 # [v4 SA-10] Restrict actuator exposure

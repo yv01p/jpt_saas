@@ -24,7 +24,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -304,17 +308,19 @@ class PhotoControllerTest {
     }
 
     @Test
-    void photoStatus_anotherUsersPhotoReturns403() throws Exception {
-        // assert GET /photos/{id}/status returns 403 when the photo belongs to a different user.
-        // getPhotoStatus() explicitly checks ownership and throws AccessDeniedException → 403,
-        // distinguishing "not found" (404) from "exists but not yours" (403).
+    void photoStatus_anotherUsersActivePhoto_returns404NotForbidden() throws Exception {
+        // IDOR fix: getPhotoStatus() must return 404 for any photo the caller does not own,
+        // whether active or deleted. Returning 403 (vs 404) would reveal that the UUID
+        // belongs to a live photo on the platform — information disclosure across tenants.
+        // The combined filter (userId AND deletedAt IS NULL) makes all non-owner cases
+        // indistinguishable from "not found", matching the pattern used in getPhoto().
         UUID user1 = createUser("status-owner@test.com", 0);
         UUID user2 = createUser("status-intruder@test.com", 0);
         UUID photoId = createPhoto(user1, "private.jpg", 1000, "PROCESSING", null);
 
         mockMvc.perform(get("/photos/" + photoId + "/status")
                         .cookie(jwtCookie(user2)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -485,6 +491,60 @@ class PhotoControllerTest {
         Long usedBytes = jdbcTemplate.queryForObject(
                 "SELECT used_bytes FROM users WHERE id = ?", Long.class, user);
         assertThat(usedBytes).isEqualTo(5000);
+    }
+
+    @Test
+    void concurrentSoftDelete_decrementsUsedBytesOnlyOnce() throws Exception {
+        // Arrange: user with 2000 bytes used, one 1000-byte photo.
+        // Two concurrent DELETE requests target the same photo.
+        //
+        // With the race fix (lock user BEFORE reading photo):
+        //   - Thread 1 acquires lock, re-reads photo (active), decrements 2000→1000, commits → 204
+        //   - Thread 2 acquires lock, re-reads photo (already deleted), throws 404 → no decrement
+        //   - Final: used_bytes = 1000
+        //
+        // Without the fix (read photo BEFORE acquiring lock):
+        //   - Both threads read photo (deletedAt=null) before either acquires the lock
+        //   - Thread 1 acquires lock, decrements 2000→1000, commits → 204
+        //   - Thread 2 acquires lock (re-reads user: 1000), decrements 1000→0, commits → 204
+        //   - Final: used_bytes = 0 (double-decrement)
+        UUID userId = createUser("race-delete@test.com", 2000);
+        UUID photoId = createPhoto(userId, "race.jpg", 1000, "DONE", null);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Integer> statuses = Collections.synchronizedList(new ArrayList<>());
+
+        Runnable task = () -> {
+            try {
+                ready.countDown();
+                go.await();
+                int status = mockMvc.perform(delete("/photos/" + photoId)
+                                .with(csrf())
+                                .cookie(jwtCookie(userId)))
+                        .andReturn().getResponse().getStatus();
+                statuses.add(status);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+        Thread t1 = new Thread(task);
+        Thread t2 = new Thread(task);
+        t1.start();
+        t2.start();
+        ready.await();
+        go.countDown();
+        t1.join();
+        t2.join();
+
+        // One request succeeds, the other finds the photo already deleted
+        assertThat(statuses).containsExactlyInAnyOrder(204, 404);
+
+        // used_bytes decremented exactly once: 2000 - 1000 = 1000
+        Long usedBytes = jdbcTemplate.queryForObject(
+                "SELECT used_bytes FROM users WHERE id = ?", Long.class, userId);
+        assertThat(usedBytes).isEqualTo(1000L);
     }
 
     @Test

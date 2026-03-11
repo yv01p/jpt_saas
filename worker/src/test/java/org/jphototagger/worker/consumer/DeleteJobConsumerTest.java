@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -107,6 +108,32 @@ class DeleteJobConsumerTest {
         }).containsExactlyInAnyOrder(origKey, smKey, mdKey);
 
         verify(redis).xack(DeleteJobConsumer.STREAM, DeleteJobConsumer.GROUP, msgId);
+    }
+
+    @Test
+    void deleteJobConsumer_xacksBeforeMinioDeletes() throws Exception {
+        // At-most-once semantics: XACK must precede all MinIO deletes.
+        // A crash after XACK loses the delete (acceptable — MinIO removeObject is idempotent).
+        // A crash before XACK leaves the PEL entry permanently stuck because there
+        // is no XAUTOCLAIM recovery on delete-jobs.
+        UUID photoId = UUID.randomUUID();
+        UUID userId  = UUID.randomUUID();
+        String msgId   = "7-0";
+        String origKey = validOriginalKey(userId, photoId);
+        String smKey   = validSmKey(userId, photoId);
+        String mdKey   = validMdKey(userId, photoId);
+
+        when(redis.xreadgroup(
+                any(Consumer.class),
+                any(XReadArgs.class),
+                any(XReadArgs.StreamOffset.class)))
+                .thenReturn(List.of(message(msgId, photoId, origKey, smKey, mdKey)));
+
+        consumer.pollOnce();
+
+        InOrder order = inOrder(redis, minioClient);
+        order.verify(redis).xack(DeleteJobConsumer.STREAM, DeleteJobConsumer.GROUP, msgId);
+        order.verify(minioClient, atLeastOnce()).removeObject(any(RemoveObjectArgs.class));
     }
 
     @Test

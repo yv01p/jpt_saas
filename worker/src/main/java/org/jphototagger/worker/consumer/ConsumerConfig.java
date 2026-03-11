@@ -15,8 +15,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.scheduling.annotation.EnableScheduling;
-
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Optional;
@@ -39,7 +37,6 @@ import java.util.UUID;
  * into that same class's constructor).
  */
 @Configuration
-@EnableScheduling
 public class ConsumerConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerConfig.class);

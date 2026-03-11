@@ -30,6 +30,7 @@ import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
@@ -228,6 +229,7 @@ class SchedulerTest {
         Item item = mock(Item.class);
         when(item.objectName()).thenReturn(orphanKey);
         when(item.isDir()).thenReturn(false);
+        when(item.lastModified()).thenReturn(ZonedDateTime.now().minusHours(3));
 
         Result<Item> result = mock(Result.class);
         when(result.get()).thenReturn(item);
@@ -262,6 +264,7 @@ class SchedulerTest {
         Item item = mock(Item.class);
         when(item.objectName()).thenReturn(objectKey);
         when(item.isDir()).thenReturn(false);
+        when(item.lastModified()).thenReturn(ZonedDateTime.now().minusHours(3));
 
         Result<Item> result = mock(Result.class);
         when(result.get()).thenReturn(item);
@@ -275,6 +278,63 @@ class SchedulerTest {
         boolean found = messages.stream().anyMatch(msg ->
                 photoId.toString().equals(msg.getValue().get("photo_id")));
         assertThat(found).as("existing photo must not be enqueued for deletion").isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void orphanReconciliation_skipsRecentlyCreatedObjects() throws Exception {
+        // SA1-F4: Objects younger than the recency threshold must be skipped
+        // to avoid racing with in-progress uploads between Tx 1 and Tx 2.
+        User user = createVerifiedUser("orphan-recent@example.com");
+        UUID userId = user.getId();
+        UUID recentPhotoId = UUID.randomUUID(); // no DB row — but object is too new to classify
+
+        String recentKey = userId + "/originals/" + recentPhotoId + ".jpg";
+
+        Item item = mock(Item.class);
+        when(item.objectName()).thenReturn(recentKey);
+        when(item.isDir()).thenReturn(false);
+        when(item.lastModified()).thenReturn(ZonedDateTime.now().minusMinutes(30));
+
+        Result<Item> result = mock(Result.class);
+        when(result.get()).thenReturn(item);
+
+        when(minioInternalClient.listObjects(any(ListObjectsArgs.class)))
+                .thenReturn(List.of(result));
+
+        orphanReconciliationScheduler.reconcileOrphans();
+
+        List<MapRecord<String, Object, Object>> messages = readDeleteJobs();
+        boolean found = messages.stream().anyMatch(msg ->
+                recentPhotoId.toString().equals(msg.getValue().get("photo_id")));
+        assertThat(found).as("recently-created object must not be treated as orphan").isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void orphanReconciliation_continuesAfterItemEnumerationError() throws Exception {
+        User user = createVerifiedUser("orphan-error@example.com");
+        UUID goodPhotoId = UUID.randomUUID();
+        String goodKey = user.getId() + "/originals/" + goodPhotoId + ".jpg";
+
+        Result<Item> badResult = mock(Result.class);
+        when(badResult.get()).thenThrow(new RuntimeException("MinIO transient error"));
+
+        Item goodItem = mock(Item.class);
+        when(goodItem.objectName()).thenReturn(goodKey);
+        when(goodItem.isDir()).thenReturn(false);
+        when(goodItem.lastModified()).thenReturn(ZonedDateTime.now().minusHours(3));
+        Result<Item> goodResult = mock(Result.class);
+        when(goodResult.get()).thenReturn(goodItem);
+
+        when(minioInternalClient.listObjects(any(ListObjectsArgs.class)))
+                .thenReturn(List.of(badResult, goodResult));
+
+        orphanReconciliationScheduler.reconcileOrphans();
+
+        boolean found = readDeleteJobs().stream().anyMatch(msg ->
+                goodPhotoId.toString().equals(msg.getValue().get("photo_id")));
+        assertThat(found).as("good orphan must be processed despite earlier error").isTrue();
     }
 
     // -------------------------------------------------------------------------
