@@ -124,3 +124,6 @@ thoughts/
 secrets/
 react-build/
 .env
+frontend/.env.development
+frontend/.env*.local
+frontend/dist/
