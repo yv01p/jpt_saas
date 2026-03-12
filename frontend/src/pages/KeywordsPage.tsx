@@ -137,6 +137,12 @@ export default function KeywordsPage() {
   return (
     <div className="keywords-page">
       <h1>Keywords</h1>
+      <button
+        type="button"
+        onClick={() => { setInputName(''); setFormMode({ kind: 'add', parentId: null }); }}
+      >
+        Add Root Keyword
+      </button>
       <ul>
         {keywords.map((kw) => (
           <KeywordNode
