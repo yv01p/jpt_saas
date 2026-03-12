@@ -4,7 +4,10 @@ import useAuthStore from '../stores/authStore';
 import { QueryClient, QueryCache, MutationCache } from '@tanstack/react-query';
 
 export async function bootstrapCsrf(): Promise<void> {
-  await fetch('/api/csrf', { credentials: 'include' });
+  const res = await fetch('/api/csrf', { credentials: 'include' });
+  if (!res.ok) {
+    console.warn('CSRF bootstrap failed with status', res.status);
+  }
 }
 
 function toCamelCase(key: string): string {

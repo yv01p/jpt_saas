@@ -57,7 +57,12 @@ app:
   default-share-days: 30
 
 server:
-  forward-headers-strategy: framework   # SA4-F4: trust X-Forwarded-Proto from reverse proxy
+  forward-headers-strategy: native   # SA9-F2: use Tomcat RemoteIpValve with trusted proxy allowlist
+  tomcat:
+    remoteip:
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
+      internal-proxies: "172\\.\\d+\\.\\d+\\.\\d+|10\\.\\d+\\.\\d+\\.\\d+"
   error:
     include-stacktrace: never   # SA4-F3: never expose stack traces to clients
     include-message: never      # SA4-F3: never expose raw exception messages to clients

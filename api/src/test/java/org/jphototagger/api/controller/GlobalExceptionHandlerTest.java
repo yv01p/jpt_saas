@@ -2,6 +2,7 @@ package org.jphototagger.api.controller;
 
 import jakarta.persistence.EntityNotFoundException;
 import org.jphototagger.api.dto.ErrorResponse;
+import org.jphototagger.api.exception.UnsupportedMediaTypeException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -48,6 +49,19 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("Request cannot be completed");
         assertThat(response.getBody().status()).isEqualTo(409);
+    }
+
+    @Test
+    void handleUnsupportedMediaTypeReturns415WithGenericMessage() {
+        // The exception message contains internal MIME detection details (e.g. "Unsupported media type: application/pdf")
+        // The handler must NOT leak this to the client — use a static, user-helpful message instead
+        var response = handler.handleUnsupportedMediaType(
+                new UnsupportedMediaTypeException("Unsupported media type: application/pdf"));
+        assertThat(response.getStatusCode().value()).isEqualTo(415);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).doesNotContain("application/pdf");
+        assertThat(response.getBody().error()).contains("Accepted:");
+        assertThat(response.getBody().status()).isEqualTo(415);
     }
 
     @Test

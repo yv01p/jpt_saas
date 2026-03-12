@@ -96,7 +96,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UnsupportedMediaTypeException.class)
     public ResponseEntity<ErrorResponse> handleUnsupportedMediaType(UnsupportedMediaTypeException ex) {
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
-                .body(new ErrorResponse(ex.getMessage(), HttpStatus.UNSUPPORTED_MEDIA_TYPE.value()));
+                .body(new ErrorResponse(
+                        "Unsupported file type. Accepted: JPEG, PNG, TIFF, HEIC, WebP, CR2, NEF, ARW, DNG",
+                        HttpStatus.UNSUPPORTED_MEDIA_TYPE.value()));
     }
 
     @ExceptionHandler(MultipartException.class)

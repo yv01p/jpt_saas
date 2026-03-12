@@ -74,7 +74,7 @@ public class SecurityConfig implements WebMvcConfigurer {
                     response.getWriter().write("{\"error\":\"Unauthorized\",\"status\":401}");
                 }))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/**", "/actuator/health").permitAll()
+                .requestMatchers("/auth/**", "/actuator/health", "/csrf").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .successHandler(oAuth2SuccessHandler))

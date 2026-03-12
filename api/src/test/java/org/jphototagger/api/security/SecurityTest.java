@@ -17,6 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -79,6 +80,15 @@ class SecurityTest {
         // because AuthController only maps POST, but NOT 401 (security allows it through).
         mockMvc.perform(get("/auth/login"))
                 .andExpect(status().isMethodNotAllowed());
+    }
+
+    @Test
+    void csrfEndpointIsPublicAndReturns204() throws Exception {
+        // /csrf should be publicly accessible (no auth required) and return 204
+        // with the XSRF-TOKEN cookie set — not rely on a 401 side-effect
+        mockMvc.perform(get("/csrf"))
+                .andExpect(status().isNoContent())
+                .andExpect(cookie().exists("XSRF-TOKEN"));
     }
 
     @Test

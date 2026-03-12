@@ -133,7 +133,8 @@ public class PhotoService {
         }
         String ext = MIME_TO_EXT.get(mimeType);
         if (ext == null) {
-            throw new UnsupportedMediaTypeException("Unsupported media type: " + mimeType);
+            log.warn("Rejected upload with unsupported MIME type: {}", mimeType);
+            throw new UnsupportedMediaTypeException("Unsupported file type");
         }
 
         // Sanitize original filename (SA3-F1)
