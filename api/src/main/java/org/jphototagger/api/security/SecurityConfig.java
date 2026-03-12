@@ -56,7 +56,7 @@ public class SecurityConfig implements WebMvcConfigurer {
                 csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(true));
                 csrf.csrfTokenRepository(csrfRepo)
                 .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
-                .ignoringRequestMatchers("/auth/login", "/auth/register", "/auth/refresh", "/auth/logout",
+                .ignoringRequestMatchers("/auth/refresh", "/auth/logout",
                         "/login/oauth2/code/*");
             })
             .exceptionHandling(ex -> ex

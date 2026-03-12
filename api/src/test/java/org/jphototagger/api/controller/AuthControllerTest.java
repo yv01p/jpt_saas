@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -78,6 +79,7 @@ class AuthControllerTest {
     @Test
     void registerCreatesUser() throws Exception {
         mockMvc.perform(post("/auth/register")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(uniqueEmail(), "securePassword12"))))
@@ -87,6 +89,7 @@ class AuthControllerTest {
     @Test
     void registerRejectsShortPassword() throws Exception {
         mockMvc.perform(post("/auth/register")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(uniqueEmail(), "short"))))
@@ -101,6 +104,7 @@ class AuthControllerTest {
         register(email, "securePassword12");
 
         mockMvc.perform(post("/auth/register")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(email, "securePassword12"))))
@@ -115,6 +119,7 @@ class AuthControllerTest {
         register(email, "securePassword12");
 
         MvcResult result = mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, "securePassword12"))))
@@ -133,6 +138,7 @@ class AuthControllerTest {
         // 5 failed attempts to lock the account
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/auth/login")
+                            .with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest(email, "wrongPassword!!"))))
@@ -141,6 +147,7 @@ class AuthControllerTest {
 
         // Now even correct password should return generic 401
         mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, "securePassword12"))))
@@ -156,6 +163,7 @@ class AuthControllerTest {
         // 3 failed attempts (below lockout threshold)
         for (int i = 0; i < 3; i++) {
             mockMvc.perform(post("/auth/login")
+                            .with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest(email, "wrongPassword!!"))))
@@ -164,6 +172,7 @@ class AuthControllerTest {
 
         // Successful login
         mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, "securePassword12"))))
@@ -172,6 +181,7 @@ class AuthControllerTest {
         // 4 more failed attempts should NOT lock the account (counter was reset)
         for (int i = 0; i < 4; i++) {
             mockMvc.perform(post("/auth/login")
+                            .with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest(email, "wrongPassword!!"))))
@@ -180,6 +190,7 @@ class AuthControllerTest {
 
         // Should still be able to login (only 4 attempts after reset, not 5)
         mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, "securePassword12"))))
@@ -303,6 +314,7 @@ class AuthControllerTest {
         register(email, "securePassword12");
 
         MvcResult result = mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, "securePassword12"))))
@@ -330,6 +342,7 @@ class AuthControllerTest {
 
     private void register(String email, String password) throws Exception {
         mockMvc.perform(post("/auth/register")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RegisterRequest(email, password))))
@@ -338,6 +351,7 @@ class AuthControllerTest {
 
     private Cookie loginAndGetRefreshCookie(String email, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/auth/login")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest(email, password))))
