@@ -51,11 +51,14 @@ public class SecurityConfig implements WebMvcConfigurer {
             // for the redirect dance. JWT filter still handles API auth without sessions.
             .sessionManagement(session -> session
                 .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
-            .csrf(csrf -> csrf
-                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+            .csrf(csrf -> {
+                var csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
+                csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(true));
+                csrf.csrfTokenRepository(csrfRepo)
                 .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
                 .ignoringRequestMatchers("/auth/login", "/auth/register", "/auth/refresh", "/auth/logout",
-                        "/login/oauth2/code/*"))
+                        "/login/oauth2/code/*");
+            })
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setContentType("application/json");
