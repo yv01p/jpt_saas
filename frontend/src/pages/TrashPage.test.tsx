@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import { server } from '../test/setup';
 import { QueryClientWrapper } from '../test/QueryClientWrapper';
 import { mockPhoto } from '../test/factories';
@@ -39,8 +39,13 @@ test('restore button calls POST /api/photos/{id}/restore', async () => {
 });
 
 test('retention window displays correctly', async () => {
+  // Freeze time so component's Date.now() matches test's Date.now()
+  const now = new Date('2026-03-10T12:00:00Z');
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+
   // Photo deleted 5 days ago — 25 days remaining in a 30-day retention window
-  const deleted_at = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+  const deleted_at = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
   const PHOTO_ID = '550e8400-e29b-41d4-a716-446655440001';
   server.use(
     http.get('/api/photos/trash', () => HttpResponse.json([
@@ -49,4 +54,6 @@ test('retention window displays correctly', async () => {
   );
   render(<TrashPage />, { wrapper: QueryClientWrapper });
   expect(await screen.findByText(/25 days remaining/i)).toBeInTheDocument();
+
+  vi.useRealTimers();
 });
