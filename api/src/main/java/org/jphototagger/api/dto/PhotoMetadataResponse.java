@@ -38,7 +38,10 @@ public record PhotoMetadataResponse(
     public PhotoMetadataResponse withoutGps() {
         Map<String, Object> filteredExif = exifData == null ? null :
                 exifData.entrySet().stream()
-                        .filter(e -> !e.getKey().toLowerCase().startsWith("gps:"))
+                        .filter(e -> {
+                            String lower = e.getKey().toLowerCase();
+                            return !lower.startsWith("gps:") && !lower.startsWith("gps ");
+                        })
                         .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         return new PhotoMetadataResponse(photoId, null, null, filteredExif, iptcData, xmpData, extractedAt);
     }

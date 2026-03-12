@@ -53,9 +53,11 @@ app:
     upload: 100       # uploads per hour per user
     general: 1000     # general requests per hour per user
     auth: 20          # auth attempts per hour per IP
+  cookie-secure: ${COOKIE_SECURE:true}
   default-share-days: 30
 
 server:
+  forward-headers-strategy: framework   # SA4-F4: trust X-Forwarded-Proto from reverse proxy
   error:
     include-stacktrace: never   # SA4-F3: never expose stack traces to clients
     include-message: never      # SA4-F3: never expose raw exception messages to clients

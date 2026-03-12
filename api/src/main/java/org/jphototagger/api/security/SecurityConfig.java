@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -33,15 +34,18 @@ public class SecurityConfig implements WebMvcConfigurer {
     private final RateLimitFilter rateLimitFilter;
     private final RlsInterceptor rlsInterceptor;
     private final OAuth2SuccessHandler oAuth2SuccessHandler;
+    private final boolean cookieSecure;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
                           RateLimitFilter rateLimitFilter,
                           RlsInterceptor rlsInterceptor,
-                          OAuth2SuccessHandler oAuth2SuccessHandler) {
+                          OAuth2SuccessHandler oAuth2SuccessHandler,
+                          @Value("${app.cookie-secure:true}") boolean cookieSecure) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.rateLimitFilter = rateLimitFilter;
         this.rlsInterceptor = rlsInterceptor;
         this.oAuth2SuccessHandler = oAuth2SuccessHandler;
+        this.cookieSecure = cookieSecure;
     }
 
     @Bean
@@ -53,20 +57,16 @@ public class SecurityConfig implements WebMvcConfigurer {
                 .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
             .csrf(csrf -> {
                 var csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
-                csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(true));
+                csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(cookieSecure));
                 csrf.csrfTokenRepository(csrfRepo)
                 .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
-                .ignoringRequestMatchers("/auth/refresh", "/auth/logout",
+                .ignoringRequestMatchers("/auth/refresh",
                         "/login/oauth2/code/*");
             })
+            // CSP, HSTS, and Permissions-Policy are managed exclusively by nginx
+            // to avoid duplicate/conflicting headers. See nginx.prod.conf.
             .headers(headers -> headers
-                .contentSecurityPolicy(csp -> csp.policyDirectives(
-                        "default-src 'self'; img-src 'self' blob: data: https: http:; style-src 'self' 'unsafe-inline'"))
-                .httpStrictTransportSecurity(hsts -> hsts
-                        .includeSubDomains(true)
-                        .maxAgeInSeconds(31536000))
-                .permissionsPolicy(pp -> pp.policy(
-                        "camera=(), microphone=(), geolocation=()")))
+                .httpStrictTransportSecurity(hsts -> hsts.disable()))
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setContentType("application/json");

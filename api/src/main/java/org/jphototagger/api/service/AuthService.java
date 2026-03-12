@@ -6,6 +6,8 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import org.springframework.scheduling.annotation.Async;
+
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,7 +68,12 @@ public class AuthService {
                         "VALUES (?, ?, ?, 'verify', NOW() + INTERVAL '24 hours', NOW())",
                 UUID.randomUUID(), userId, tokenHash);
 
-        emailService.sendVerificationEmail(email, plainToken);
+        sendVerificationEmailAsync(email, plainToken);
+    }
+
+    @Async
+    void sendVerificationEmailAsync(String email, String token) {
+        emailService.sendVerificationEmail(email, token);
     }
 
     /**

@@ -14,6 +14,8 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
@@ -28,6 +30,7 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
     private final RefreshTokenService refreshTokenService;
     private final long jwtExpiryMinutes;
     private final int refreshExpiryDays;
+    private final boolean cookieSecure;
     private final String redirectUri;
 
     public OAuth2SuccessHandler(
@@ -36,13 +39,22 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
             RefreshTokenService refreshTokenService,
             @Value("${app.jwt-expiry-minutes}") long jwtExpiryMinutes,
             @Value("${app.refresh-token-expiry-days:30}") int refreshExpiryDays,
+            @Value("${app.cookie-secure:true}") boolean cookieSecure,
             @Value("${app.oauth2.redirect-uri:/}") String redirectUri) {
         this.authJdbc = authJdbc;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.jwtExpiryMinutes = jwtExpiryMinutes;
         this.refreshExpiryDays = refreshExpiryDays;
+        this.cookieSecure = cookieSecure;
         this.redirectUri = redirectUri;
+    }
+
+    @PostConstruct
+    void validateRedirectUri() {
+        if (!redirectUri.endsWith("/")) {
+            throw new IllegalStateException("app.oauth2.redirect-uri must end with '/'");
+        }
     }
 
     @Override
@@ -105,11 +117,11 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         String refreshToken = refreshTokenService.createToken(userId);
 
         ResponseCookie jwtCookie = ResponseCookie.from("jwt", jwt)
-                .httpOnly(true).secure(true).sameSite("Lax")
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax")
                 .path("/").maxAge(Duration.ofMinutes(jwtExpiryMinutes)).build();
 
         ResponseCookie refreshCookie = ResponseCookie.from("refresh", refreshToken)
-                .httpOnly(true).secure(true).sameSite("Lax")
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax")
                 .path("/auth").maxAge(Duration.ofDays(refreshExpiryDays)).build();
 
         response.addHeader(HttpHeaders.SET_COOKIE, jwtCookie.toString());

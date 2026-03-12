@@ -33,18 +33,21 @@ public class AuthController {
     private final RefreshTokenService refreshTokenService;
     private final long jwtExpiryMinutes;
     private final int refreshExpiryDays;
+    private final boolean cookieSecure;
 
     public AuthController(
             AuthService authService,
             JwtService jwtService,
             RefreshTokenService refreshTokenService,
             @Value("${app.jwt-expiry-minutes}") long jwtExpiryMinutes,
-            @Value("${app.refresh-token-expiry-days:30}") int refreshExpiryDays) {
+            @Value("${app.refresh-token-expiry-days:30}") int refreshExpiryDays,
+            @Value("${app.cookie-secure:true}") boolean cookieSecure) {
         this.authService = authService;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.jwtExpiryMinutes = jwtExpiryMinutes;
         this.refreshExpiryDays = refreshExpiryDays;
+        this.cookieSecure = cookieSecure;
     }
 
     @PostMapping("/register")
@@ -115,9 +118,9 @@ public class AuthController {
         }
 
         ResponseCookie clearJwt = ResponseCookie.from("jwt", "")
-                .httpOnly(true).secure(true).sameSite("Lax").path("/").maxAge(0).build();
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/").maxAge(0).build();
         ResponseCookie clearRefresh = ResponseCookie.from("refresh", "")
-                .httpOnly(true).secure(true).sameSite("Lax").path("/auth").maxAge(0).build();
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/auth").maxAge(0).build();
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, clearJwt.toString())
@@ -127,13 +130,13 @@ public class AuthController {
 
     private ResponseCookie buildJwtCookie(String token) {
         return ResponseCookie.from("jwt", token)
-                .httpOnly(true).secure(true).sameSite("Lax")
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax")
                 .path("/").maxAge(Duration.ofMinutes(jwtExpiryMinutes)).build();
     }
 
     private ResponseCookie buildRefreshCookie(String refreshToken) {
         return ResponseCookie.from("refresh", refreshToken)
-                .httpOnly(true).secure(true).sameSite("Lax")
+                .httpOnly(true).secure(cookieSecure).sameSite("Lax")
                 .path("/auth").maxAge(Duration.ofDays(refreshExpiryDays)).build();
     }
 
