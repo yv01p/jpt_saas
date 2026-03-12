@@ -13,6 +13,28 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('HTTP 409 on upload shows duplicate photo message', async () => {
+  server.use(
+    http.post('/api/photos', () =>
+      HttpResponse.json({ message: 'Conflict' }, { status: 409 })),
+  );
+  render(<UploadDropzone />, { wrapper: QueryClientWrapper });
+  const file = new File(['bytes'], 'photo.jpg', { type: 'image/jpeg' });
+  await userEvent.upload(screen.getByTestId('dropzone-input'), file);
+  expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+});
+
+test('HTTP 413 on upload shows quota exceeded message', async () => {
+  server.use(
+    http.post('/api/photos', () =>
+      HttpResponse.json({ message: 'Payload Too Large' }, { status: 413 })),
+  );
+  render(<UploadDropzone />, { wrapper: QueryClientWrapper });
+  const file = new File(['bytes'], 'photo.jpg', { type: 'image/jpeg' });
+  await userEvent.upload(screen.getByTestId('dropzone-input'), file);
+  expect(await screen.findByText(/quota exceeded/i)).toBeInTheDocument();
+});
+
 test('drop triggers POST /api/photos', async () => {
   const UPLOAD_ID = '550e8400-e29b-41d4-a716-446655440001';
   let uploadCalled = false;

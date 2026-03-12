@@ -38,6 +38,12 @@ export default function UploadDropzone() {
     if (processingStatus === 'FAILED') {
       return 'Processing failed — try re-uploading. If the problem persists, contact support.';
     }
+    if (error === 'duplicate') {
+      return 'This photo already exists in your library.';
+    }
+    if (error === 'quota_exceeded') {
+      return 'Upload failed — storage quota exceeded.';
+    }
     return null;
   };
 

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { apiFetch } from '../client';
+import { ApiError } from '../types';
 import type { Photo, ProcessingStatus } from '../types';
 
 interface StatusResponse {
@@ -183,7 +184,14 @@ export function useUpload(): UseUploadReturn {
       }
     } catch (err: unknown) {
       if (!mountedRef.current) return;
-      const message = err instanceof Error ? err.message : 'Upload failed';
+      let message: string;
+      if (err instanceof ApiError && err.status === 409) {
+        message = 'duplicate';
+      } else if (err instanceof ApiError && err.status === 413) {
+        message = 'quota_exceeded';
+      } else {
+        message = err instanceof Error ? err.message : 'Upload failed';
+      }
       setState((prev) => ({
         ...prev,
         isUploading: false,
