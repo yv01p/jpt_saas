@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
-import type { Photo, Keyword } from '../api/types';
+import type { Photo, Keyword, PhotoMetadata } from '../api/types';
+import MetadataPanel from '../components/MetadataPanel';
 
 interface PhotoPageProps {
   photoId: string;
@@ -14,6 +15,13 @@ export default function PhotoPage({ photoId }: PhotoPageProps) {
   const { data: photo } = useQuery<Photo>({
     queryKey: ['photo', photoId],
     queryFn: () => apiFetch(`/api/photos/${photoId}`),
+    staleTime: 55 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+  });
+
+  const { data: metadata } = useQuery<PhotoMetadata>({
+    queryKey: ['photo-metadata', photoId],
+    queryFn: () => apiFetch(`/api/photos/${photoId}/metadata`),
     staleTime: 55 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
   });
@@ -54,6 +62,12 @@ export default function PhotoPage({ photoId }: PhotoPageProps) {
         <div className="photo-view">
           <img src={photo.originalUrl} alt={photo.filename} />
         </div>
+      )}
+
+      {metadata && (
+        <aside className="metadata-sidebar">
+          <MetadataPanel metadata={metadata} />
+        </aside>
       )}
 
       <div className="keyword-panel">

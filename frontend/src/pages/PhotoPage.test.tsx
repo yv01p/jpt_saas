@@ -38,6 +38,8 @@ test('assigning keyword to photo calls POST /api/photos/{id}/keywords/{keywordId
   server.use(
     http.get(`/api/photos/${PHOTO_ID}`, () => HttpResponse.json(mockPhoto({ id: PHOTO_ID }))),
     http.get(`/api/photos/${PHOTO_ID}/keywords`, () => HttpResponse.json([])),
+    http.get(`/api/photos/${PHOTO_ID}/metadata`, () =>
+      HttpResponse.json({ exif_data: {}, gps_latitude: null, gps_longitude: null })),
     http.get('/api/keywords', () => HttpResponse.json([
       { id: KEYWORD_ID, name: 'Animals', parent_id: null, children: [] }
     ])),
@@ -59,6 +61,8 @@ test('removing keyword from photo calls DELETE /api/photos/{id}/keywords/{keywor
     http.get(`/api/photos/${PHOTO_ID}/keywords`, () => HttpResponse.json([
       { id: KEYWORD_ID, name: 'Animals', parent_id: null, children: [] }
     ])),
+    http.get(`/api/photos/${PHOTO_ID}/metadata`, () =>
+      HttpResponse.json({ exif_data: {}, gps_latitude: null, gps_longitude: null })),
     http.delete(`/api/photos/${PHOTO_ID}/keywords/${KEYWORD_ID}`, () => {
       removeCalled = true;
       return new HttpResponse(null, { status: 204 });
