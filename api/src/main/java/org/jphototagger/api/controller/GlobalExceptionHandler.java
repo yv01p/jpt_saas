@@ -31,12 +31,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
-        String message = ex.getBindingResult().getFieldErrors().stream()
-                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
-                .reduce((a, b) -> a + "; " + b)
-                .orElse("Validation failed");
         return ResponseEntity.badRequest()
-                .body(new ErrorResponse(message, HttpStatus.BAD_REQUEST.value()));
+                .body(new ErrorResponse("Validation failed", HttpStatus.BAD_REQUEST.value()));
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
@@ -84,13 +80,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EmailVerificationRequiredException.class)
     public ResponseEntity<ErrorResponse> handleEmailVerificationRequired(EmailVerificationRequiredException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(new ErrorResponse(ex.getMessage(), HttpStatus.FORBIDDEN.value()));
+                .body(new ErrorResponse("Email verification required", HttpStatus.FORBIDDEN.value()));
     }
 
     @ExceptionHandler(QuotaExceededException.class)
     public ResponseEntity<ErrorResponse> handleQuotaExceeded(QuotaExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
-                .body(new ErrorResponse(ex.getMessage(), HttpStatus.PAYMENT_REQUIRED.value()));
+                .body(new ErrorResponse("Storage quota exceeded", HttpStatus.PAYMENT_REQUIRED.value()));
     }
 
     @ExceptionHandler(UnsupportedMediaTypeException.class)

@@ -201,7 +201,7 @@ class PhotoControllerTest {
 
     @Test
     void upload_rejectsUnverifiedUser() throws Exception {
-        // assert HTTP 403 with message "Email verification required before uploading"
+        // assert HTTP 403 with generic "Email verification required" message
         UUID userId = createUser("upload-unverified@test.com", 0); // email_verified defaults to false
         byte[] jpegBytes = minimalJpegBytes();
         MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", jpegBytes);
@@ -211,7 +211,7 @@ class PhotoControllerTest {
                         .with(csrf())
                         .cookie(jwtCookie(userId)))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("Email verification required before uploading"));
+                .andExpect(jsonPath("$.error").value("Email verification required"));
     }
 
     @Test
