@@ -59,6 +59,14 @@ public class SecurityConfig implements WebMvcConfigurer {
                 .ignoringRequestMatchers("/auth/refresh", "/auth/logout",
                         "/login/oauth2/code/*");
             })
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives(
+                        "default-src 'self'; img-src 'self' blob: data: https: http:; style-src 'self' 'unsafe-inline'"))
+                .httpStrictTransportSecurity(hsts -> hsts
+                        .includeSubDomains(true)
+                        .maxAgeInSeconds(31536000))
+                .permissionsPolicy(pp -> pp.policy(
+                        "camera=(), microphone=(), geolocation=()")))
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setContentType("application/json");
