@@ -48,58 +48,63 @@ function RealQueryClientWrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-test('401 response clears auth store and redirects to /login', async () => {
-  const replaceMock = vi.fn();
-  const originalLocation = window.location;
-  Object.defineProperty(window, 'location', { value: { ...originalLocation, replace: replaceMock }, writable: true });
+describe('401 redirect handling', () => {
+  let replaceMock: ReturnType<typeof vi.fn>;
+  let originalLocation: Location;
 
-  useAuthStore.setState({ isAuthenticated: true, isHydrating: false, user: mockUser });
-  server.use(http.get('/api/photos', () => new HttpResponse(null, { status: 401 })));
+  beforeEach(() => {
+    replaceMock = vi.fn();
+    originalLocation = window.location;
+    Object.defineProperty(window, 'location', { value: { ...originalLocation, replace: replaceMock }, writable: true });
+  });
 
-  queryClient.setDefaultOptions({ queries: { retry: false } });
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
+  });
 
-  const { result } = renderHook(
-    () => useQuery({
-      queryKey: ['photos'],
-      queryFn: async () => {
-        const r = await fetch('/api/photos');
-        if (!r.ok) throw new ApiError(r.status, '');
-        return r.json();
-      },
-    }),
-    { wrapper: RealQueryClientWrapper }
-  );
-  await waitFor(() => expect(result.current.isError).toBe(true));
-  expect(useAuthStore.getState().isAuthenticated).toBe(false);
-  expect(replaceMock).toHaveBeenCalledWith('/login');
-  Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
-});
+  test('401 response clears auth store and redirects to /login', async () => {
+    useAuthStore.setState({ isAuthenticated: true, isHydrating: false, user: mockUser });
+    server.use(http.get('/api/photos', () => new HttpResponse(null, { status: 401 })));
 
-test('401 on mutation clears auth store and redirects to /login', async () => {
-  const replaceMock = vi.fn();
-  const originalLocation = window.location;
-  Object.defineProperty(window, 'location', { value: { ...originalLocation, replace: replaceMock }, writable: true });
+    queryClient.setDefaultOptions({ queries: { retry: false } });
 
-  useAuthStore.setState({ isAuthenticated: true, isHydrating: false, user: mockUser });
-  server.use(http.post('/api/photos', () => new HttpResponse(null, { status: 401 })));
+    const { result } = renderHook(
+      () => useQuery({
+        queryKey: ['photos'],
+        queryFn: async () => {
+          const r = await fetch('/api/photos');
+          if (!r.ok) throw new ApiError(r.status, '');
+          return r.json();
+        },
+      }),
+      { wrapper: RealQueryClientWrapper }
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(replaceMock).toHaveBeenCalledWith('/login');
+  });
 
-  queryClient.setDefaultOptions({ mutations: { retry: false } });
+  test('401 on mutation clears auth store and redirects to /login', async () => {
+    useAuthStore.setState({ isAuthenticated: true, isHydrating: false, user: mockUser });
+    server.use(http.post('/api/photos', () => new HttpResponse(null, { status: 401 })));
 
-  const { result } = renderHook(
-    () => useMutation({
-      mutationFn: async () => {
-        const r = await fetch('/api/photos', { method: 'POST' });
-        if (!r.ok) throw new ApiError(r.status, '');
-        return r.json();
-      },
-    }),
-    { wrapper: RealQueryClientWrapper }
-  );
-  await act(async () => result.current.mutate());
-  await waitFor(() => expect(result.current.isError).toBe(true));
-  expect(useAuthStore.getState().isAuthenticated).toBe(false);
-  expect(replaceMock).toHaveBeenCalledWith('/login');
-  Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
+    queryClient.setDefaultOptions({ mutations: { retry: false } });
+
+    const { result } = renderHook(
+      () => useMutation({
+        mutationFn: async () => {
+          const r = await fetch('/api/photos', { method: 'POST' });
+          if (!r.ok) throw new ApiError(r.status, '');
+          return r.json();
+        },
+      }),
+      { wrapper: RealQueryClientWrapper }
+    );
+    await act(async () => result.current.mutate());
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(replaceMock).toHaveBeenCalledWith('/login');
+  });
 });
 
 // Session hydration tests

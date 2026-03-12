@@ -79,10 +79,12 @@ export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T
 }
 
 export async function fetchCurrentUser(): Promise<User | null> {
-  const res = await fetch('/api/users/me', { credentials: 'include' });
-  if (res.status === 401) return null;
-  if (!res.ok) throw new ApiError(res.status, 'Failed to fetch current user');
-  return camelizeKeys(await res.json()) as User;
+  try {
+    return await apiFetch<User>('/api/users/me');
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return null;
+    throw err;
+  }
 }
 
 export async function hydrateSession(): Promise<void> {
