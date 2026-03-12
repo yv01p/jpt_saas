@@ -44,6 +44,9 @@ export default function UploadDropzone() {
     if (error === 'quota_exceeded') {
       return 'Upload failed — storage quota exceeded.';
     }
+    if (error) {
+      return 'Upload failed — please try again.';
+    }
     return null;
   };
 

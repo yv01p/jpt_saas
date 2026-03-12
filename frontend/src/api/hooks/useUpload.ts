@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
 import { ApiError } from '../types';
 import type { Photo, ProcessingStatus } from '../types';
@@ -40,6 +41,7 @@ function computeInterval(completedPolls: number): number {
 }
 
 export function useUpload(): UseUploadReturn {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<UploadState>({
     uploadedPhoto: null,
     processingStatus: null,
@@ -95,6 +97,9 @@ export function useUpload(): UseUploadReturn {
         if (hardTimeoutId.current !== null) {
           clearTimeout(hardTimeoutId.current);
           hardTimeoutId.current = null;
+        }
+        if (status.processingStatus === 'DONE') {
+          queryClient.invalidateQueries({ queryKey: ['photos'] });
         }
         setState((prev) => ({
           ...prev,

@@ -3,10 +3,12 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { vi, test, expect, afterEach } from 'vitest';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { server } from '../test/setup';
 import { mockPhoto } from '../test/factories';
-import { QueryClientWrapper } from '../test/QueryClientWrapper';
+import { QueryClientWrapper, createTestQueryClient } from '../test/QueryClientWrapper';
+import { QueryClientProvider } from '@tanstack/react-query';
 import UploadDropzone from './UploadDropzone';
 
 afterEach(() => {
@@ -186,4 +188,42 @@ test('"still processing" message appears after 30 seconds in non-terminal state'
   expect(screen.queryByText(/still processing/i)).not.toBeInTheDocument();
   await vi.advanceTimersByTimeAsync(30_000 + 100);
   expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+});
+
+test('HTTP 500 on upload shows generic error message', async () => {
+  server.use(
+    http.post('/api/photos', () =>
+      HttpResponse.json({ message: 'Internal Server Error' }, { status: 500 })),
+  );
+  render(<UploadDropzone />, { wrapper: QueryClientWrapper });
+  const file = new File(['bytes'], 'photo.jpg', { type: 'image/jpeg' });
+  await userEvent.upload(screen.getByTestId('dropzone-input'), file);
+  expect(await screen.findByText(/upload failed/i)).toBeInTheDocument();
+});
+
+test('invalidates ["photos"] query cache when processing reaches DONE', async () => {
+  const UPLOAD_ID = '550e8400-e29b-41d4-a716-446655440001';
+  server.use(
+    http.post('/api/photos', () =>
+      HttpResponse.json(mockPhoto({ id: UPLOAD_ID, processing_status: 'PENDING' }))),
+    http.get(`/api/photos/${UPLOAD_ID}/status`, () =>
+      HttpResponse.json({ id: UPLOAD_ID, processing_status: 'DONE' })),
+  );
+
+  const queryClient = createTestQueryClient();
+  const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <UploadDropzone />
+    </QueryClientProvider>
+  );
+
+  const file = new File(['bytes'], 'photo.jpg', { type: 'image/jpeg' });
+  await userEvent.upload(screen.getByTestId('dropzone-input'), file);
+  await waitFor(() =>
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['photos'] })
+    )
+  );
 });
