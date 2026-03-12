@@ -1,13 +1,16 @@
 import React from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
 import type { User } from '../api/types';
 import useAuthStore from '../stores/authStore';
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
+
   const { data: user, isLoading, isError } = useQuery<User>({
     queryKey: ['currentUser'],
     queryFn: () => apiFetch<User>('/api/users/me'),
+    staleTime: 5 * 60 * 1000,
   });
 
   const mutation = useMutation({
@@ -19,6 +22,7 @@ export default function SettingsPage() {
       }),
     onSuccess: (responseUser) => {
       useAuthStore.getState().setAuth(responseUser);
+      queryClient.setQueryData(['currentUser'], responseUser);
     },
   });
 
