@@ -1,35 +1,51 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route, Navigate, Link, useParams } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './api/client';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import LibraryPage from './pages/LibraryPage';
+import PhotoPage from './pages/PhotoPage';
+import KeywordsPage from './pages/KeywordsPage';
+import AlbumsPage from './pages/AlbumsPage';
+import SearchPage from './pages/SearchPage';
+import TrashPage from './pages/TrashPage';
+import SettingsPage from './pages/SettingsPage';
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+function PhotoPageRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <PhotoPage photoId={id ?? ''} />;
 }
 
-export default App
+function NotFoundPage() {
+  return (
+    <div style={{ padding: '2rem', textAlign: 'center' }}>
+      <h1>Page not found</h1>
+      <Link to="/library">Back to library</Link>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login"    element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/library"  element={<ProtectedRoute><LibraryPage /></ProtectedRoute>} />
+          <Route path="/photo/:id" element={<ProtectedRoute><PhotoPageRoute /></ProtectedRoute>} />
+          <Route path="/keywords" element={<ProtectedRoute><KeywordsPage /></ProtectedRoute>} />
+          <Route path="/albums"   element={<ProtectedRoute><AlbumsPage /></ProtectedRoute>} />
+          <Route path="/search"   element={<ProtectedRoute><SearchPage /></ProtectedRoute>} />
+          <Route path="/trash"    element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/"         element={<Navigate to="/library" replace />} />
+          <Route path="*"         element={<NotFoundPage />} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
+  );
+}
+
+export default App;
