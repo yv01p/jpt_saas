@@ -227,7 +227,7 @@ public class PhotoService {
     @Transactional
     public Photo updateStorageKey(UUID photoId, String objectKey) {
         Photo photo = photoRepository.findById(photoId)
-                .orElseThrow(() -> new EntityNotFoundException("Photo not found: " + photoId));
+                .orElseThrow(() -> new EntityNotFoundException("Photo not found"));
         photo.setStorageKey(objectKey);
         photo.setProcessingStatus(ProcessingStatus.PENDING);
         return photoRepository.save(photo);
@@ -247,7 +247,7 @@ public class PhotoService {
     @Transactional(readOnly = true)
     public Page<Photo> listPhotos(UUID userId, int page, int size) {
         return photoRepository.findByUserIdAndDeletedAtIsNullOrderByUploadedAtDesc(
-                userId, PageRequest.of(page, Math.min(size, 100)));
+                userId, PageRequest.of(page, size));
     }
 
     @Transactional(readOnly = true)
@@ -290,7 +290,7 @@ public class PhotoService {
     @Transactional(readOnly = true)
     public Page<Photo> listTrash(UUID userId, int page, int size) {
         return photoRepository.findByUserIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(
-                userId, PageRequest.of(page, Math.min(size, 100)));
+                userId, PageRequest.of(page, size));
     }
 
     @Transactional

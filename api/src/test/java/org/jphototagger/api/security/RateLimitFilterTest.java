@@ -87,15 +87,15 @@ class RateLimitFilterTest {
         UUID userId = createUser("upload-rl-" + UUID.randomUUID() + "@test.com");
         Cookie jwt = jwtCookie(userId);
 
-        // First 3 upload requests pass the rate limiter (POST to /photos — the upload endpoint)
+        // First 3 upload requests pass the rate limiter (POST to /photos/upload)
         for (int i = 0; i < 3; i++) {
-            mockMvc.perform(post("/photos")
+            mockMvc.perform(post("/photos/upload")
                             .with(csrf())
                             .cookie(jwt));
         }
 
         // 4th upload request should be rate limited
-        mockMvc.perform(post("/photos")
+        mockMvc.perform(post("/photos/upload")
                         .with(csrf())
                         .cookie(jwt))
                 .andExpect(status().isTooManyRequests())

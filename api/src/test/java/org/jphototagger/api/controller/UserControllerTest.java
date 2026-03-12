@@ -74,7 +74,7 @@ class UserControllerTest {
     void getMe_returnsAuthenticatedUser() throws Exception {
         UUID userId = createUser("getme@test.com");
 
-        mockMvc.perform(get("/api/users/me")
+        mockMvc.perform(get("/users/me")
                         .cookie(jwtCookie(userId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId.toString()))
@@ -86,7 +86,7 @@ class UserControllerTest {
 
     @Test
     void getMe_returnsUnauthorized_whenNotAuthenticated() throws Exception {
-        mockMvc.perform(get("/api/users/me"))
+        mockMvc.perform(get("/users/me"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -94,7 +94,7 @@ class UserControllerTest {
     void patchMe_updatesShowGps() throws Exception {
         UUID userId = createUser("patchme@test.com");
 
-        mockMvc.perform(patch("/api/users/me")
+        mockMvc.perform(patch("/users/me")
                         .with(csrf())
                         .cookie(jwtCookie(userId))
                         .contentType(MediaType.APPLICATION_JSON)

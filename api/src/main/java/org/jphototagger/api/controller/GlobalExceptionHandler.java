@@ -41,12 +41,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
-        String message = ex.getConstraintViolations().stream()
-                .map(cv -> cv.getPropertyPath() + ": " + cv.getMessage())
-                .reduce((a, b) -> a + "; " + b)
-                .orElse("Constraint violation");
         return ResponseEntity.badRequest()
-                .body(new ErrorResponse(message, HttpStatus.BAD_REQUEST.value()));
+                .body(new ErrorResponse("Invalid request parameters", HttpStatus.BAD_REQUEST.value()));
     }
 
     @ExceptionHandler(AuthenticationException.class)
@@ -58,7 +54,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(EntityNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse(ex.getMessage(), HttpStatus.NOT_FOUND.value()));
+                .body(new ErrorResponse("Not Found", HttpStatus.NOT_FOUND.value()));
     }
 
     @ExceptionHandler(IllegalStateException.class)

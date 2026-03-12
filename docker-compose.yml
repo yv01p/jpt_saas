@@ -173,7 +173,7 @@ services:
         mc mb --ignore-existing minio/jpt-photos &&
         (mc admin user add minio $$MINIO_API_ACCESS_KEY $$MINIO_API_SECRET_KEY || true) &&
         (mc admin policy attach minio readwrite --user $$MINIO_API_ACCESS_KEY || true) &&
-        echo '{"Version":"2012-10-17","Statement":[]}' > /tmp/presign-only-policy.json &&
+        echo '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::jpt-photos/*\"]}]}' > /tmp/presign-only-policy.json &&
         (mc admin policy create minio presign-only /tmp/presign-only-policy.json || true) &&
         (mc admin user add minio $$MINIO_API_PRESIGN_ACCESS_KEY $$MINIO_API_PRESIGN_SECRET_KEY || true) &&
         (mc admin policy attach minio presign-only --user $$MINIO_API_PRESIGN_ACCESS_KEY || true) &&

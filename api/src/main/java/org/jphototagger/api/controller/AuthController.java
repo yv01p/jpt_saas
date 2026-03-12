@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import org.jphototagger.api.dto.ErrorResponse;
 import org.jphototagger.api.dto.LoginRequest;
 import org.jphototagger.api.dto.RegisterRequest;
+import org.jphototagger.api.exception.EmailVerificationRequiredException;
 import org.jphototagger.api.security.JwtService;
 import org.jphototagger.api.service.AuthService;
 import org.jphototagger.api.service.RefreshTokenService;
@@ -57,6 +58,18 @@ public class AuthController {
                 .body(Map.of("message", "If this email is not registered, a verification email has been sent."));
     }
 
+    @PostMapping("/verify")
+    public ResponseEntity<Map<String, String>> verifyEmail(@RequestBody Map<String, String> request) {
+        String token = request.get("token");
+        if (token == null || token.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Token is required"));
+        }
+        authService.verifyEmail(token);
+        // Always return success to prevent token enumeration
+        return ResponseEntity.ok(Map.of("message", "If the token is valid, your email has been verified."));
+    }
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
         try {
@@ -74,6 +87,9 @@ public class AuthController {
                     .header(HttpHeaders.SET_COOKIE, jwtCookie.toString())
                     .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
                     .body(Map.of("message", "Login successful"));
+        } catch (EmailVerificationRequiredException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new ErrorResponse("Please verify your email before logging in", 403));
         } catch (BadCredentialsException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new ErrorResponse("Invalid credentials", 401));
@@ -118,7 +134,7 @@ public class AuthController {
         }
 
         ResponseCookie clearJwt = ResponseCookie.from("jwt", "")
-                .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/").maxAge(0).build();
+                .httpOnly(true).secure(cookieSecure).sameSite("Strict").path("/").maxAge(0).build();
         ResponseCookie clearRefresh = ResponseCookie.from("refresh", "")
                 .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/auth").maxAge(0).build();
 
@@ -130,7 +146,7 @@ public class AuthController {
 
     private ResponseCookie buildJwtCookie(String token) {
         return ResponseCookie.from("jwt", token)
-                .httpOnly(true).secure(cookieSecure).sameSite("Lax")
+                .httpOnly(true).secure(cookieSecure).sameSite("Strict")
                 .path("/").maxAge(Duration.ofMinutes(jwtExpiryMinutes)).build();
     }
 

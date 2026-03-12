@@ -2,6 +2,7 @@ package org.jphototagger.api.service;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.jphototagger.api.exception.EmailVerificationRequiredException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -84,7 +85,7 @@ public class AuthService {
      */
     public Map<String, Object> authenticate(String email, String password) {
         var rows = authJdbc.queryForList(
-                "SELECT id, email, password_hash, failed_login_attempts, locked_until FROM users WHERE email = ?",
+                "SELECT id, email, password_hash, failed_login_attempts, locked_until, email_verified FROM users WHERE email = ?",
                 email);
 
         if (rows.isEmpty()) {
@@ -129,6 +130,12 @@ public class AuthService {
             throw new BadCredentialsException("Invalid credentials");
         }
 
+        // Reject unverified email — checked after bcrypt to preserve timing side-channel protection
+        Boolean emailVerified = (Boolean) user.get("email_verified");
+        if (emailVerified == null || !emailVerified) {
+            throw new EmailVerificationRequiredException("Please verify your email before logging in");
+        }
+
         // Successful login — reset counter
         authJdbc.update(
                 "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
@@ -141,6 +148,9 @@ public class AuthService {
      * Change password and return userId for token revocation.
      */
     public UUID changePassword(UUID userId, String oldPassword, String newPassword) {
+        if (oldPassword.length() > 128 || newPassword.length() > 128) {
+            throw new BadCredentialsException("Invalid credentials");
+        }
         var rows = authJdbc.queryForList(
                 "SELECT password_hash FROM users WHERE id = ?", userId);
         if (rows.isEmpty()) {
@@ -157,6 +167,32 @@ public class AuthService {
                 newHash, userId);
 
         return userId;
+    }
+
+    /**
+     * Verify email using the token sent during registration.
+     * Uses constant-time hash comparison via database lookup on the SHA-256 hash.
+     * Deletes all verification tokens for the user after success.
+     *
+     * @return true if verification succeeded, false if token is invalid or expired
+     */
+    public boolean verifyEmail(String plainToken) {
+        String tokenHash = RefreshTokenService.sha256(plainToken);
+
+        var rows = authJdbc.queryForList(
+                "SELECT user_id FROM email_tokens WHERE token_hash = ? AND purpose = 'verify' AND expires_at > NOW()",
+                tokenHash);
+
+        if (rows.isEmpty()) {
+            return false;
+        }
+
+        UUID userId = (UUID) rows.get(0).get("user_id");
+
+        authJdbc.update("UPDATE users SET email_verified = true, updated_at = NOW() WHERE id = ?", userId);
+        authJdbc.update("DELETE FROM email_tokens WHERE user_id = ? AND purpose = 'verify'", userId);
+
+        return true;
     }
 
     public String getUserEmail(UUID userId) {

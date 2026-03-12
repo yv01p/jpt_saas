@@ -16,7 +16,7 @@ class GlobalExceptionHandlerTest {
         var response = handler.handleNotFound(new EntityNotFoundException("Photo not found"));
         assertThat(response.getStatusCode().value()).isEqualTo(404);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().error()).isEqualTo("Photo not found");
+        assertThat(response.getBody().error()).isEqualTo("Not Found");
         assertThat(response.getBody().status()).isEqualTo(404);
     }
 

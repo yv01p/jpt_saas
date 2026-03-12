@@ -9,6 +9,7 @@ import org.jphototagger.api.service.RefreshTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -17,6 +18,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -59,6 +61,7 @@ class AuthControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired StringRedisTemplate redisTemplate;
+    @Autowired @Qualifier("authJdbcTemplate") JdbcTemplate authJdbc;
 
     private int emailCounter = 0;
 
@@ -117,6 +120,7 @@ class AuthControllerTest {
     void loginReturnsJwtCookie() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
 
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .with(csrf())
@@ -126,14 +130,15 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andReturn();
 
-        assertCookieAttributes(result, "jwt");
-        assertCookieAttributes(result, "refresh");
+        assertCookieAttributes(result, "jwt", "Strict");
+        assertCookieAttributes(result, "refresh", "Lax");
     }
 
     @Test
     void loginReturnsGeneric401ForLockedAccount() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
 
         // 5 failed attempts to lock the account
         for (int i = 0; i < 5; i++) {
@@ -159,6 +164,7 @@ class AuthControllerTest {
     void successfulLoginResetsFailedAttemptCounter() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
 
         // 3 failed attempts (below lockout threshold)
         for (int i = 0; i < 3; i++) {
@@ -203,6 +209,7 @@ class AuthControllerTest {
     void refreshReturnsNewJwtAndRefreshCookies() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
         Cookie refreshCookie = loginAndGetRefreshCookie(email, "securePassword12");
 
         MvcResult result = mockMvc.perform(post("/auth/refresh")
@@ -210,14 +217,15 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andReturn();
 
-        assertCookieAttributes(result, "jwt");
-        assertCookieAttributes(result, "refresh");
+        assertCookieAttributes(result, "jwt", "Strict");
+        assertCookieAttributes(result, "refresh", "Lax");
     }
 
     @Test
     void oldRefreshTokenIsInvalidAfterRotation() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
         Cookie refreshCookie = loginAndGetRefreshCookie(email, "securePassword12");
 
         // Rotate once
@@ -233,6 +241,7 @@ class AuthControllerTest {
     void replayOfConsumedTokenRevokesEntireFamily() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
         Cookie originalRefreshCookie = loginAndGetRefreshCookie(email, "securePassword12");
 
         // Rotate to get T2
@@ -255,6 +264,7 @@ class AuthControllerTest {
     void passwordChangeInvalidatesAllRefreshTokens() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
         Cookie refreshCookie = loginAndGetRefreshCookie(email, "securePassword12");
 
         // Simulate password change by revoking all tokens for user
@@ -279,6 +289,7 @@ class AuthControllerTest {
         // Manually create a token, then delete it from Redis to simulate expiry
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
         Cookie refreshCookie = loginAndGetRefreshCookie(email, "securePassword12");
 
         // Delete the token from Redis to simulate expiry
@@ -309,9 +320,10 @@ class AuthControllerTest {
     }
 
     @Test
-    void cookieAttributesAreSecureAndSameSiteLax() throws Exception {
+    void cookieAttributesAreSecureWithCorrectSameSite() throws Exception {
         String email = uniqueEmail();
         register(email, "securePassword12");
+        verifyEmail(email);
 
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .with(csrf())
@@ -329,13 +341,27 @@ class AuthControllerTest {
                 .filter(h -> h.startsWith("jwt=")).findFirst().orElseThrow();
         assertThat(jwtHeader).contains("Secure");
         assertThat(jwtHeader).contains("HttpOnly");
-        assertThat(jwtHeader).contains("SameSite=Lax");
+        assertThat(jwtHeader).contains("SameSite=Strict");
 
         String refreshHeader = setCookieHeaders.stream()
                 .filter(h -> h.startsWith("refresh=")).findFirst().orElseThrow();
         assertThat(refreshHeader).contains("Secure");
         assertThat(refreshHeader).contains("HttpOnly");
         assertThat(refreshHeader).contains("SameSite=Lax");
+    }
+
+    @Test
+    void loginReturns403ForUnverifiedEmail() throws Exception {
+        String email = uniqueEmail();
+        register(email, "securePassword12");
+        // Do NOT verify email
+
+        mockMvc.perform(post("/auth/login")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new LoginRequest(email, "securePassword12"))))
+                .andExpect(status().isForbidden());
     }
 
     // --- Helpers ---
@@ -372,7 +398,7 @@ class AuthControllerTest {
         return new Cookie("refresh", value);
     }
 
-    private void assertCookieAttributes(MvcResult result, String cookieName) {
+    private void assertCookieAttributes(MvcResult result, String cookieName, String sameSite) {
         String header = result.getResponse().getHeaders("Set-Cookie").stream()
                 .filter(h -> h.startsWith(cookieName + "="))
                 .findFirst()
@@ -380,7 +406,11 @@ class AuthControllerTest {
 
         assertThat(header).contains("HttpOnly");
         assertThat(header).contains("Secure");
-        assertThat(header).contains("SameSite=Lax");
+        assertThat(header).contains("SameSite=" + sameSite);
+    }
+
+    private void verifyEmail(String email) {
+        authJdbc.update("UPDATE users SET email_verified = true WHERE email = ?", email);
     }
 
     private UUID refreshTokenServiceGetUserId(String rawToken) {

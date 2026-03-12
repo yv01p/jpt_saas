@@ -90,8 +90,8 @@ class OAuth2SuccessHandlerTest {
         // Assert: JWT cookie is issued and redirects to frontend
         assertCookiePresent(response, "jwt");
         assertCookiePresent(response, "refresh");
-        assertCookieSecure(response, "jwt");
-        assertCookieSecure(response, "refresh");
+        assertCookieSecure(response, "jwt", "Strict");
+        assertCookieSecure(response, "refresh", "Lax");
         assertThat(response.getRedirectedUrl()).isEqualTo("/");
     }
 
@@ -235,13 +235,13 @@ class OAuth2SuccessHandlerTest {
         assertThat(found).as("Cookie '%s' should not be present", name).isFalse();
     }
 
-    private void assertCookieSecure(MockHttpServletResponse response, String name) {
+    private void assertCookieSecure(MockHttpServletResponse response, String name, String sameSite) {
         String header = response.getHeaders("Set-Cookie").stream()
                 .filter(h -> h.startsWith(name + "="))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("No " + name + " cookie found"));
         assertThat(header).contains("Secure");
         assertThat(header).contains("HttpOnly");
-        assertThat(header).contains("SameSite=Lax");
+        assertThat(header).contains("SameSite=" + sameSite);
     }
 }

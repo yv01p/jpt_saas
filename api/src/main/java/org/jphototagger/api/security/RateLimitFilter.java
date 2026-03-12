@@ -72,7 +72,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof UUID userId)) {
             if (isAuthEndpoint(request)) {
-                String clientIp = getClientIp(request);
+                String clientIp = request.getRemoteAddr();
                 ConsumptionProbe probe = proxyManager.builder()
                         .build("rate:auth:" + clientIp, this::authBucketConfig)
                         .tryConsumeAndReturnRemaining(1);
@@ -120,15 +120,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return request.getRequestURI().startsWith("/auth/");
     }
 
-    private String getClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            String[] parts = forwarded.split(",");
-            return parts[parts.length - 1].trim();
-        }
-        return request.getRemoteAddr();
-    }
-
     private BucketConfiguration authBucketConfig() {
         return BucketConfiguration.builder()
                 .addLimit(Bandwidth.builder()
@@ -141,7 +132,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private boolean isUploadRequest(HttpServletRequest request) {
         String method = request.getMethod();
         String path = request.getRequestURI();
-        return "POST".equals(method) && path.matches(".*/photos/?$");
+        return "POST".equals(method) && path.matches(".*/photos/upload/?$");
     }
 
     private BucketConfiguration uploadBucketConfig() {

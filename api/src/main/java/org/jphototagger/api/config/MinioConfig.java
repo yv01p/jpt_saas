@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
  *   <li>{@code minioPublicClient} — connects to the Nginx-proxied public URL.
  *       Used <em>only</em> for pre-signed URL generation so that URLs returned
  *       to browsers begin with the public hostname, not the internal one.
- *       Carries a presign-only IAM user with an empty policy (no S3 permissions).
+ *       Carries a read-only presign IAM user (s3:GetObject only).
  *       MUST NEVER be used for actual data I/O operations.</li>
  * </ul>
  *
@@ -35,7 +35,7 @@ public class MinioConfig {
     @Value("${minio.secret-key}")
     private String secretKey;
 
-    /** Credentials for the presign-only IAM user — empty policy, no S3 data access. */
+    /** Credentials for the presign IAM user — read-only (s3:GetObject), used for pre-signed URL generation. */
     @Value("${minio.presign-access-key}")
     private String presignAccessKey;
 
@@ -51,9 +51,8 @@ public class MinioConfig {
     }
 
     /**
-     * Pre-sign-only client. Carries an empty-policy IAM user — no GetObject/PutObject/DeleteObject
-     * permission. Use only for {@code getPresignedObjectUrl()} (pure HMAC computation).
-     * Do not pass this bean to any code path that calls I/O methods.
+     * Pre-sign-only client. Carries a read-only IAM user (s3:GetObject on jpt-photos/*).
+     * Use only for {@code getPresignedObjectUrl()} — do not pass to any code path that calls I/O methods.
      */
     @Bean("minioPublicClient")
     public MinioClient minioPublicClient() {
