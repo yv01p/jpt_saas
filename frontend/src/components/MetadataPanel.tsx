@@ -36,6 +36,7 @@ export default function MetadataPanel({ metadata }: MetadataPanelProps) {
   return (
     <div className="metadata-panel">
       {SECTION_ORDER.map((section) => {
+        if (section === 'GPS' && !showGps) return null;
         const entries = sections[section];
         if (entries.length === 0) return null;
         return (
