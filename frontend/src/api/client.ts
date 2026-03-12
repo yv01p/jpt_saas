@@ -60,10 +60,10 @@ export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T
     ...processedOptions,
     credentials: 'include',
     headers: {
-      'X-XSRF-TOKEN': csrfToken,
       ...(processedOptions?.headers instanceof Headers
         ? Object.fromEntries(processedOptions.headers.entries())
         : processedOptions?.headers),
+      'X-XSRF-TOKEN': csrfToken,
     },
   });
   if (!res.ok) {
