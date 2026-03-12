@@ -6,10 +6,8 @@ import org.jphototagger.api.entity.User;
 import org.jphototagger.api.repository.PhotoMetadataRepository;
 import org.jphototagger.api.repository.PhotoRepository;
 import org.jphototagger.api.repository.UserRepository;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
@@ -37,11 +35,11 @@ public class PhotoMetadataService {
 
         // Retrieve the authenticated user's GPS preference
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+                .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
         // Retrieve metadata (may not exist yet if processing is still in progress)
         var metadata = photoMetadataRepository.findById(photoId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Metadata not available"));
+                .orElseThrow(() -> new EntityNotFoundException("Metadata not available"));
 
         // Build metadata response
         PhotoMetadataResponse response = PhotoMetadataResponse.from(metadata);
