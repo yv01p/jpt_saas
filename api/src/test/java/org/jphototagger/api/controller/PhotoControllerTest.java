@@ -576,6 +576,115 @@ class PhotoControllerTest {
     }
 
     // -------------------------------------------------------------------------
+    // Keyword-photo assignment tests
+    // -------------------------------------------------------------------------
+
+    private UUID createKeyword(UUID userId, String name) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update(
+                "INSERT INTO keywords (id, user_id, name) VALUES (?, ?, ?)",
+                id, userId, name);
+        return id;
+    }
+
+    @Test
+    void listKeywordsForPhoto_returnsAssignedKeywords() throws Exception {
+        UUID user = createUser("kw-list@test.com", 0);
+        UUID photoId = createPhoto(user, "kw.jpg", 1000, "DONE", null);
+        UUID kw1 = createKeyword(user, "Animals");
+        UUID kw2 = createKeyword(user, "Dogs");
+
+        jdbcTemplate.update(
+                "INSERT INTO photo_keywords (photo_id, keyword_id, user_id) VALUES (?, ?, ?)",
+                photoId, kw1, user);
+        jdbcTemplate.update(
+                "INSERT INTO photo_keywords (photo_id, keyword_id, user_id) VALUES (?, ?, ?)",
+                photoId, kw2, user);
+
+        mockMvc.perform(get("/photos/" + photoId + "/keywords")
+                        .cookie(jwtCookie(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void listKeywordsForPhoto_returns404ForOtherUsersPhoto() throws Exception {
+        UUID user1 = createUser("kw-list1@test.com", 0);
+        UUID user2 = createUser("kw-list2@test.com", 0);
+        UUID photoId = createPhoto(user1, "private.jpg", 1000, "DONE", null);
+
+        mockMvc.perform(get("/photos/" + photoId + "/keywords")
+                        .cookie(jwtCookie(user2)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void addKeywordToPhoto_returns200() throws Exception {
+        UUID user = createUser("kw-add@test.com", 0);
+        UUID photoId = createPhoto(user, "kw.jpg", 1000, "DONE", null);
+        UUID kwId = createKeyword(user, "Nature");
+
+        mockMvc.perform(post("/photos/" + photoId + "/keywords/" + kwId)
+                        .with(csrf())
+                        .cookie(jwtCookie(user)))
+                .andExpect(status().isOk());
+
+        // Verify row in photo_keywords
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM photo_keywords WHERE photo_id = ? AND keyword_id = ? AND user_id = ?",
+                Integer.class, photoId, kwId, user);
+        assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void addKeywordToPhoto_returns404ForOtherUsersKeyword() throws Exception {
+        UUID user1 = createUser("kw-add1@test.com", 0);
+        UUID user2 = createUser("kw-add2@test.com", 0);
+        UUID photoId = createPhoto(user1, "kw.jpg", 1000, "DONE", null);
+        UUID kwId = createKeyword(user2, "OtherUserKeyword");
+
+        mockMvc.perform(post("/photos/" + photoId + "/keywords/" + kwId)
+                        .with(csrf())
+                        .cookie(jwtCookie(user1)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void removeKeywordFromPhoto_returns204() throws Exception {
+        UUID user = createUser("kw-del@test.com", 0);
+        UUID photoId = createPhoto(user, "kw.jpg", 1000, "DONE", null);
+        UUID kwId = createKeyword(user, "ToRemove");
+
+        jdbcTemplate.update(
+                "INSERT INTO photo_keywords (photo_id, keyword_id, user_id) VALUES (?, ?, ?)",
+                photoId, kwId, user);
+
+        mockMvc.perform(delete("/photos/" + photoId + "/keywords/" + kwId)
+                        .with(csrf())
+                        .cookie(jwtCookie(user)))
+                .andExpect(status().isNoContent());
+
+        // Verify row removed
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM photo_keywords WHERE photo_id = ? AND keyword_id = ?",
+                Integer.class, photoId, kwId);
+        assertThat(count).isEqualTo(0);
+    }
+
+    @Test
+    void removeKeywordFromPhoto_returns404ForOtherUsersPhoto() throws Exception {
+        UUID user1 = createUser("kw-del1@test.com", 0);
+        UUID user2 = createUser("kw-del2@test.com", 0);
+        UUID photoId = createPhoto(user1, "kw.jpg", 1000, "DONE", null);
+        UUID kwId = createKeyword(user1, "Animals");
+
+        mockMvc.perform(delete("/photos/" + photoId + "/keywords/" + kwId)
+                        .with(csrf())
+                        .cookie(jwtCookie(user2)))
+                .andExpect(status().isNotFound());
+    }
+
+    // -------------------------------------------------------------------------
     // Helper methods
     // -------------------------------------------------------------------------
 
