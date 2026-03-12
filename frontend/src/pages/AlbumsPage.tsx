@@ -11,17 +11,19 @@ export default function AlbumsPage() {
   const queryClient = useQueryClient();
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [showAddPhoto, setShowAddPhoto] = useState(false);
-  const [addPhotoId, setAddPhotoId] = useState('new-photo');
+  const [addPhotoId, setAddPhotoId] = useState('');
 
-  const { data: albums = [] } = useQuery<Album[]>({
+  const { data: albums = [], isPending: albumsLoading, isError: albumsError } = useQuery<Album[]>({
     queryKey: ['albums'],
     queryFn: () => apiFetch('/api/albums'),
+    staleTime: 10 * 60 * 1000,
   });
 
   const { data: albumDetail } = useQuery<AlbumDetail>({
     queryKey: ['album', selectedAlbumId],
     queryFn: () => apiFetch(`/api/albums/${encodeURIComponent(selectedAlbumId!)}`),
     enabled: selectedAlbumId !== null,
+    staleTime: 5 * 60 * 1000,
   });
 
   const addPhotoMutation = useMutation({
@@ -32,7 +34,7 @@ export default function AlbumsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['album', selectedAlbumId] });
       setShowAddPhoto(false);
-      setAddPhotoId('new-photo');
+      setAddPhotoId('');
     },
   });
 
@@ -52,7 +54,7 @@ export default function AlbumsPage() {
   function handleAlbumClick(albumId: string) {
     setSelectedAlbumId(albumId);
     setShowAddPhoto(false);
-    setAddPhotoId('new-photo');
+    setAddPhotoId('');
   }
 
   function handleAddPhotoConfirm() {
@@ -60,10 +62,13 @@ export default function AlbumsPage() {
     addPhotoMutation.mutate({ albumId: selectedAlbumId, photoId: addPhotoId.trim() });
   }
 
-  function handleRemovePhoto(photoId: string, filename: string) {
+  function handleRemovePhoto(photoId: string) {
     if (!selectedAlbumId) return;
     removePhotoMutation.mutate({ albumId: selectedAlbumId, photoId });
   }
+
+  if (albumsLoading) return <p>Loading...</p>;
+  if (albumsError) return <p>Failed to load albums.</p>;
 
   return (
     <div className="albums-page">
@@ -91,7 +96,7 @@ export default function AlbumsPage() {
                 <button
                   type="button"
                   aria-label={`remove ${photo.filename}`}
-                  onClick={() => handleRemovePhoto(photo.id, photo.filename)}
+                  onClick={() => handleRemovePhoto(photo.id)}
                 >
                   Remove
                 </button>
@@ -124,7 +129,7 @@ export default function AlbumsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowAddPhoto(false); setAddPhotoId('new-photo'); }}
+                  onClick={() => { setShowAddPhoto(false); setAddPhotoId(''); }}
                 >
                   Cancel
                 </button>
