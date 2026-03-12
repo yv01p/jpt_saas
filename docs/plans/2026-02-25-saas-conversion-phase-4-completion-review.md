@@ -4,7 +4,7 @@
 
 Phase 4's scope was to build a complete React frontend for the JPhotoTagger SaaS application — including API client infrastructure, authentication, photo management (grid, upload, detail view), keyword/album/search/trash/settings pages, and all associated security requirements — wired together with React Router.
 
-**High-level completion status:** Mostly delivered with one minor backend gap.
+**High-level completion status:** Fully delivered. Backend keyword-photo endpoint gap resolved.
 
 ## 2. Completed Items
 
@@ -39,7 +39,7 @@ Phase 4's scope was to build a complete React frontend for the JPhotoTagger SaaS
 
 ## 4. Omitted Items
 
-- **Backend keyword-photo assignment endpoints:** Task 4.6 prerequisite block specifies that `GET /api/photos/{id}/keywords`, `POST /api/photos/{id}/keywords/{keywordId}`, and `DELETE /api/photos/{id}/keywords/{keywordId}` must be added to `PhotoController.java`. These endpoints are **not implemented** in the backend. The frontend `PhotoPage.tsx` calls these endpoints, and the frontend tests mock them via MSW, but the actual Spring Boot controller does not expose them. This will cause 404 errors at runtime when users attempt to assign or remove keywords from photos.
+- ~~**Backend keyword-photo assignment endpoints:**~~ **Resolved.** `GET/POST/DELETE /api/photos/{id}/keywords[/{keywordId}]` implemented in `PhotoController.java` with 6 integration tests (commit `f493c87e6`).
 - **SA4-F4 — Cookie `Secure`/`SameSite=Strict` verification:** Plan requires verifying these attributes in staging before production deployment. This is a deployment-time task, not a code task — not yet verifiable.
 - **SA4-F7 — nginx security headers (CSP, X-Frame-Options, etc.):** Deployment-time configuration documented in plan but not yet applied. Expected to be handled during deployment.
 
@@ -83,8 +83,7 @@ The architecture is clean: API client with bidirectional key transforms, Zustand
 **Issues Found:**
 
 - **Important:**
-  - **Missing backend keyword-photo endpoints** — `PhotoController.java` does not implement `GET/POST/DELETE /api/photos/{id}/keywords[/{keywordId}]`. The entity infrastructure (`PhotoKeyword`, `PhotoKeywordRepository`) exists from Phase 3, but no controller or service methods expose it. The frontend `PhotoPage.tsx` (lines 31-57) calls these endpoints. This will cause runtime 404 errors on the photo detail view keyword assignment feature.
-    - **Suggested fix:** Add three endpoint methods to `PhotoController.java` and corresponding service methods to `PhotoService.java`, as specified in the Task 4.6 prerequisite block of the plan. No new migration or entity is needed.
+  - ~~**Missing backend keyword-photo endpoints**~~ **Resolved.** `PhotoController.java` now implements `GET/POST/DELETE /api/photos/{id}/keywords[/{keywordId}]` with ownership validation via `EntityNotFoundException`. Six integration tests added to `PhotoControllerTest.java`. Fixed in commit `f493c87e6`.
 
 - **Minor/Polish:**
   - **CSRF header theoretically overridable** — `apiFetch` spreads caller headers after the CSRF token (client.ts:62-67). A caller passing `{ headers: { 'X-XSRF-TOKEN': 'evil' } }` would override it. No current caller does this. To harden: swap the spread order so CSRF token comes last, or remove it from the spread entirely.
@@ -101,8 +100,7 @@ The architecture is clean: API client with bidirectional key transforms, Zustand
 
 ## 8. Final Assessment
 
-Phase 4 delivers a complete, well-tested React frontend with all 10 tasks (4.0–4.9) implemented. The codebase builds cleanly, passes 65 tests, and follows the security requirements documented across 8 plan revisions. The architecture is clean and the code quality is high. The single material gap is the missing backend keyword-photo assignment endpoints — three REST methods on `PhotoController` that the frontend already calls. This is a bounded, well-defined omission that can be addressed with a small backend change before integration testing.
+Phase 4 delivers a complete, well-tested React frontend with all 10 tasks (4.0–4.9) implemented. The codebase builds cleanly, passes 65 tests, and follows the security requirements documented across 8 plan revisions. The architecture is clean and the code quality is high. The previously missing backend keyword-photo assignment endpoints have been implemented in `PhotoController.java` with 6 integration tests (commit `f493c87e6`), closing the last material gap.
 
 This implementation plan is considered **complete with the following caveats:**
-- The three backend keyword-photo assignment endpoints (`GET/POST/DELETE /api/photos/{id}/keywords[/{keywordId}]`) specified in the Task 4.6 prerequisite block must be implemented before the photo detail keyword assignment feature is functional at runtime.
 - SA4-F4 (cookie Secure/SameSite) and SA4-F7 (nginx security headers) are deployment-time requirements that must be verified in staging before production.
