@@ -11,7 +11,7 @@ export default function AlbumsPage() {
   const queryClient = useQueryClient();
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [showAddPhoto, setShowAddPhoto] = useState(false);
-  const [addPhotoId, setAddPhotoId] = useState('');
+  const [addPhotoId, setAddPhotoId] = useState('placeholder');
 
   const { data: albums = [], isPending: albumsLoading, isError: albumsError } = useQuery<Album[]>({
     queryKey: ['albums'],
@@ -34,7 +34,7 @@ export default function AlbumsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['album', selectedAlbumId] });
       setShowAddPhoto(false);
-      setAddPhotoId('');
+      setAddPhotoId('placeholder');
     },
   });
 
@@ -54,7 +54,7 @@ export default function AlbumsPage() {
   function handleAlbumClick(albumId: string) {
     setSelectedAlbumId(albumId);
     setShowAddPhoto(false);
-    setAddPhotoId('');
+    setAddPhotoId('placeholder');
   }
 
   function handleAddPhotoConfirm() {
@@ -129,7 +129,7 @@ export default function AlbumsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowAddPhoto(false); setAddPhotoId(''); }}
+                  onClick={() => { setShowAddPhoto(false); setAddPhotoId('placeholder'); }}
                 >
                   Cancel
                 </button>

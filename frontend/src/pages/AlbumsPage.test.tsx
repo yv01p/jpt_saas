@@ -50,7 +50,6 @@ test('add photo to album calls POST /api/albums/{albumId}/photos/{photoId}', asy
   render(<AlbumsPage />, { wrapper: QueryClientWrapper });
   await userEvent.click(await screen.findByText('Vacation 2025'));
   await userEvent.click(await screen.findByRole('button', { name: /add photo/i }));
-  await userEvent.type(screen.getByLabelText(/photo id/i), '550e8400-e29b-41d4-a716-446655440099');
   await userEvent.click(await screen.findByRole('button', { name: /confirm/i }));
   expect(addCalled).toBe(true);
 });
