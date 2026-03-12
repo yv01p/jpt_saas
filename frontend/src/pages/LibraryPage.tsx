@@ -4,6 +4,7 @@ import { apiFetch } from '../api/client';
 import type { SearchResult } from '../api/types';
 import { PAGE_SIZE } from '../api/constants';
 import PhotoGrid from '../components/PhotoGrid';
+import UploadDropzone from '../components/UploadDropzone';
 
 function fetchPhotos({ page, size }: { page: number; size: number }): Promise<SearchResult> {
   return apiFetch(`/api/photos?page=${page}&size=${size}`);
@@ -42,7 +43,7 @@ export default function LibraryPage() {
 
   return (
     <div>
-      {/* UploadDropzone — integrated in Task 4.5 */}
+      <UploadDropzone />
       <PhotoGrid
         photos={photos}
         onLoadMore={fetchNextPage}
