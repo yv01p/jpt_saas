@@ -57,6 +57,7 @@ export function useUpload(): UseUploadReturn {
   const pollTimeoutId = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hardTimeoutId = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const doPollRef = useRef<((photoId: string) => Promise<void>) | null>(null);
 
   const cancelAllTimers = useCallback(() => {
     if (pollTimeoutId.current !== null) {
@@ -77,6 +78,7 @@ export function useUpload(): UseUploadReturn {
     };
   }, [cancelAllTimers]);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const doPoll = useCallback(async (photoId: string) => {
     if (!mountedRef.current) return;
     pollTimeoutId.current = null;
@@ -116,15 +118,19 @@ export function useUpload(): UseUploadReturn {
         }));
         // Schedule next poll
         const interval = computeInterval(pollCount.current);
-        pollTimeoutId.current = setTimeout(() => doPoll(photoId), interval);
+        pollTimeoutId.current = setTimeout(() => { doPollRef.current?.(photoId); }, interval);
       }
     } catch {
       if (!mountedRef.current) return;
       pollCount.current += 1;
       const interval = computeInterval(pollCount.current);
-      pollTimeoutId.current = setTimeout(() => doPoll(photoId), interval);
+      pollTimeoutId.current = setTimeout(() => { doPollRef.current?.(photoId); }, interval);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    doPollRef.current = doPoll;
+  }, [doPoll]);
 
   const upload = useCallback(async (file: File) => {
     // Cancel any in-flight timers

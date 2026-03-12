@@ -1,9 +1,7 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { vi, test, expect, afterEach } from 'vitest';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { server } from '../test/setup';
 import { mockPhoto } from '../test/factories';

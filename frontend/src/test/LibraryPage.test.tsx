@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { vi, test, expect, beforeEach, afterEach, describe } from 'vitest';
@@ -118,7 +117,7 @@ describe('LibraryPage', () => {
       expect(state?.dataUpdatedAt).toBeDefined();
     });
     const cache = queryClient.getQueryCache().find({ queryKey: ['photos'] });
-    expect(cache?.options.staleTime).toBe(10 * 60 * 1000);
+    expect((cache?.options as Record<string, unknown>)?.staleTime).toBe(10 * 60 * 1000);
   });
 
   test('fetches next page when virtual range reaches end of loaded photos', async () => {

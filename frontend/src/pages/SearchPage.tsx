@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
 import type { SearchResult, Keyword } from '../api/types';
@@ -91,29 +91,20 @@ export default function SearchPage() {
     keywordId: '',
   });
 
-  // Saved searches loaded from localStorage for the current user
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>(() => {
+  // Version counter bumped whenever the user saves a new search, to trigger re-read from localStorage
+  const [savedVersion, setSavedVersion] = useState(0);
+
+  // Derive saved searches directly from localStorage; re-derives on user change or after save
+  const savedSearches = useMemo<SavedSearch[]>(() => {
     if (!user) return [];
     try {
       return JSON.parse(localStorage.getItem(SAVED_SEARCHES_KEY(user.id)) ?? '[]');
     } catch {
       return [];
     }
-  });
-
-  // Re-read saved searches when user changes (e.g., on mount after store hydrates)
-  useEffect(() => {
-    if (!user) {
-      setSavedSearches([]);
-      return;
-    }
-    try {
-      const stored = JSON.parse(localStorage.getItem(SAVED_SEARCHES_KEY(user.id)) ?? '[]');
-      setSavedSearches(stored);
-    } catch {
-      setSavedSearches([]);
-    }
-  }, [user?.id]);
+    // savedVersion is included to force re-computation after a save
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, savedVersion]);
 
   // Keywords query
   const { data: keywordsRaw = [] } = useQuery<Keyword[]>({
@@ -178,7 +169,7 @@ export default function SearchPage() {
     }
     const updated = [...existing, entry];
     localStorage.setItem(key, JSON.stringify(updated));
-    setSavedSearches(updated);
+    setSavedVersion((v) => v + 1);
   }
 
   // ---------------------------------------------------------------------------

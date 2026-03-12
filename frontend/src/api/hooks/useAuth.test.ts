@@ -1,7 +1,7 @@
+import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useQuery, useMutation, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
-import React from 'react';
 import { server } from '../../test/setup';
 import { QueryClientWrapper } from '../../test/QueryClientWrapper';
 import { bootstrapCsrf, hydrateSession, camelizeKeys, queryClient } from '../client';
@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 test('csrf bootstrap fetches /api/csrf before app renders', async () => {
-  const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response());
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response());
   await bootstrapCsrf();
   expect(fetchSpy).toHaveBeenCalledWith('/api/csrf', { credentials: 'include' });
   fetchSpy.mockRestore();

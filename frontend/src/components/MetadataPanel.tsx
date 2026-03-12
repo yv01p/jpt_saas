@@ -1,4 +1,3 @@
-import React from 'react';
 import type { PhotoMetadata } from '../api/types';
 import useAuthStore from '../stores/authStore';
 

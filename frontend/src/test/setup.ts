@@ -17,8 +17,8 @@ if (typeof localStorage === 'object' && typeof localStorage.setItem !== 'functio
     removeItem(key: string) { store.delete(key); },
     clear() { store.clear(); },
   };
-  // @ts-expect-error -- intentionally replacing Node.js 25's broken global
-  globalThis.localStorage = memStorage;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).localStorage = memStorage;
 }
 
 export const server = setupServer();
