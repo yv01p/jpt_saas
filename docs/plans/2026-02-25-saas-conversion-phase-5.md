@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Version:** 7.0
+**Version:** 8.0
 **Last updated:** 2026-03-12
-**Reviews incorporated:** `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-1.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-2.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-3.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-4.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-5.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-6.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-1.md`
+**Reviews incorporated:** `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-1.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-2.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-3.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-4.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-5.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-6.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-1.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-2.md`
 
 **Goal:** Convert JPhotoTagger from a single-user Java Swing desktop app into a multi-user web SaaS application per the approved design (docs/plans/2026-02-24-saas-conversion-design.md).
 
@@ -44,7 +44,7 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
          mail.smtp.starttls.enable: true
    ```
 
-3. Create `api/src/main/java/org/jphototagger/api/service/SimpleEmailService.java` — a minimal, default-profile implementation that sends plain text emails via `JavaMailSender`. This is a placeholder to be replaced with a proper HTML-templated implementation before production go-live:
+3. Create `api/src/main/java/org/jphototagger/api/service/SimpleEmailService.java` — a minimal, default-profile implementation that sends plain text emails via `JavaMailSender`. This is a placeholder to be replaced with a proper HTML-templated implementation before production go-live (SA-P5-2 F1/F9 fix — use `UriComponentsBuilder` for safe URL construction, specify `sendPasswordResetEmail` explicitly):
    ```java
    @Service
    @Profile("!dev & !test")
@@ -52,15 +52,41 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
        @Autowired private JavaMailSender mailSender;
        @Value("${app.base-url}") private String baseUrl;
 
+       @PostConstruct
+       void validateBaseUrl() {
+           try {
+               var uri = new URI(baseUrl);
+               if (!"https".equals(uri.getScheme()) && !"http".equals(uri.getScheme())) {
+                   throw new IllegalStateException("app.base-url must use http or https scheme");
+               }
+           } catch (URISyntaxException e) {
+               throw new IllegalStateException("app.base-url is not a valid URI: " + baseUrl, e);
+           }
+       }
+
        @Override
        public void sendVerificationEmail(String to, String token) {
            var msg = new SimpleMailMessage();
            msg.setTo(to);
            msg.setSubject("Verify your email");
-           msg.setText(baseUrl + "/auth/verify?token=" + token);
+           msg.setText(UriComponentsBuilder.fromUriString(baseUrl)
+               .path("/auth/verify")
+               .queryParam("token", token)
+               .toUriString());
            mailSender.send(msg);
        }
-       // similar for sendPasswordResetEmail
+
+       @Override
+       public void sendPasswordResetEmail(String to, String token) {
+           var msg = new SimpleMailMessage();
+           msg.setTo(to);
+           msg.setSubject("Reset your password");
+           msg.setText(UriComponentsBuilder.fromUriString(baseUrl)
+               .path("/auth/reset-password")
+               .queryParam("token", token)
+               .toUriString());
+           mailSender.send(msg);
+       }
    }
    ```
 
@@ -72,17 +98,24 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
 
 7. Add to `.env.ci`: `COOKIE_SECURE=false` (CI uses HTTP-only nginx).
 
-8. Add a startup validation (SA-F8 fix) to reject known-weak JWT secrets in non-test environments:
+8. Add a startup validation (SA-F8 fix) to reject known-weak JWT secrets in non-test environments (SA-P5-2 F3 fix — add clarifying comment; primary secret strength validation is enforced by `JwtService`'s 256-bit minimum):
    ```java
    @Value("${JWT_SECRET}")
    private String jwtSecret;
 
    @PostConstruct
    void validateSecrets() {
+       // Guard against deploying with .env.ci values. Primary secret strength
+       // validation (256-bit minimum) is enforced by JwtService.
        if (jwtSecret.startsWith("ci_test")) {
            throw new IllegalStateException("CI test JWT secret detected — do not use .env.ci in production");
        }
    }
+   ```
+
+9. Update `.env.example` with JWT generation instructions (SA-P5-2 F3 fix):
+   ```
+   JWT_SECRET=  # Generate with: openssl rand -base64 64
    ```
 
 **Files:**
@@ -139,9 +172,26 @@ Add `SHARE_READER_PASSWORD: ${SHARE_READER_PASSWORD}` to the API service environ
 
 Add `SHARE_READER_PASSWORD=` to `.env.example`.
 
-Create `ShareReaderDataSourceConfig.java` using `@ConfigurationProperties("app.share-reader")` to wire a `shareReaderDataSource` bean. The `@Bean` method must be **package-private** (no `public` modifier) to prevent injection outside the config package. Create a dedicated `ShareLookupRepository` class (not a general-purpose repository) that is the **sole consumer** of `shareReaderDataSource` for unauthenticated share lookups via parameterized native queries.
+Create `ShareReaderDataSourceConfig.java` that constructs the BYPASSRLS DataSource internally and exposes **only** `ShareLookupRepository` as a Spring bean (SA-P5-2 F4 fix — the DataSource is not registered as a bean, preventing any other class from injecting it). Create a dedicated `ShareLookupRepository` class (not a general-purpose repository) for unauthenticated share lookups via parameterized native queries:
+   ```java
+   @Configuration
+   class ShareReaderDataSourceConfig {
+       @Bean
+       ShareLookupRepository shareLookupRepository(
+               @Value("${app.share-reader.jdbc-url}") String jdbcUrl,
+               @Value("${app.share-reader.username}") String username,
+               @Value("${app.share-reader.password}") String password) {
+           var ds = new HikariDataSource();
+           ds.setJdbcUrl(jdbcUrl);
+           ds.setUsername(username);
+           ds.setPassword(password);
+           ds.setMaximumPoolSize(3);
+           return new ShareLookupRepository(ds);
+       }
+   }
+   ```
 
-> **SECURITY (SA-F1 fix):** Although `share_reader` has `BYPASSRLS`, the risk is mitigated by: (1) package-private bean scoping, (2) a dedicated repository class as the sole consumer, (3) an ArchUnit test enforcing this constraint (see Step 2), (4) parameterized queries (Spring Data JPA default — eliminates SQL injection), and (5) column-limited queries (select only needed columns, not `SELECT *`). The share lookup query must also validate token format (hex string, 64 chars for SHA-256 output) before querying.
+> **SECURITY (SA-F1 fix, SA-P5-2 F4 fix):** Although `share_reader` has `BYPASSRLS`, the risk is mitigated by: (1) the DataSource is not registered as a Spring bean — only `ShareLookupRepository` is exposed, (2) an ArchUnit test enforcing that no other class references the BYPASSRLS DataSource (defense-in-depth, see Step 2), (3) parameterized queries (Spring Data JPA default — eliminates SQL injection), and (4) column-limited queries (select only needed columns, not `SELECT *`). The share lookup query must also validate token format (base64url string, 43 chars for 256-bit token: `[A-Za-z0-9_-]{43}`) before querying (SA-P5-2 F6 fix — corrected from "hex string, 64 chars" which conflated the token format with the SHA-256 hash format).
 
 > **SECURITY (SA-F3 fix):** All authenticated share endpoints (`POST /shares`, `DELETE /shares/{id}`, `GET /shares`) use the **primary DataSource** with RLS active. Only the unauthenticated `GET /share/{token}` lookup uses `shareReaderDataSource`.
 
@@ -180,8 +230,9 @@ void shareReaderDataSource_onlyUsedByShareLookupRepository() { }  // SA-F1 fix �
 
 **Step 3: Implement ShareService (M22 fix)**
 
-- `SecureRandom` 256-bit token generation
-- SHA-256 hash storage
+- `SecureRandom` 256-bit token generation (32 bytes), encoded as base64url with padding stripped (43 chars), consistent with `RefreshTokenService` (SA-P5-2 F6 fix)
+- SHA-256 hash of the token stored in DB as hex string
+- Token format validation before DB query: `Pattern.compile("[A-Za-z0-9_-]{43}")` — return 404 (not 400) for format failures to avoid leaking expected format (SA-P5-2 F6 fix)
 - Default 30-day expiry
 - GPS stripping on shared photo metadata (unless `includeGps` is true)
 - Join photos table and filter `deleted_at IS NULL`
@@ -447,7 +498,20 @@ Replace the placeholder comment `# Prometheus and Grafana — deferred to monito
 
 - `prometheus` service: image `prom/prometheus:v2.53.0`, mount `prometheus.yml` and `alert_rules.yml`, connect to `backend` network, expose port 9090 (internal only), persistent volume for data
 - `grafana` service: image `grafana/grafana:11.1.0`, mount `grafana/provisioning/`, connect to `backend` network, expose port 3000 (internal only), depends on `prometheus`, persistent volume for data. Access via SSH port forwarding only (per design doc) — no nginx proxy or `frontend` network needed.
-- `alertmanager` service: image `prom/alertmanager:v0.27.0`, mount `alertmanager.yml`, connect to **both `backend` and `frontend` networks** (M32 fix — `backend` is `internal: true`, alertmanager needs external network access to reach SMTP servers), expose port 9093 (internal only). Use `smtp_auth_password_file` for credential management (SA-F4 fix — see Step 4)
+- `alertmanager` service: image `prom/alertmanager:v0.27.0`, mount `alertmanager.yml`, connect to `backend` network only (SA-P5-2 F8 fix — removed `frontend` network; alertmanager reaches MailPit/SMTP via `backend` network in current scope; when production external SMTP is needed, add a dedicated `smtp` network instead of using `frontend`). Expose port 9093 (internal only). Use `smtp_auth_password_file` for credential management (SA-F4 fix — see Step 4). Add container hardening consistent with all other services (SA-P5-2 F8 fix — was the only service missing hardening):
+  ```yaml
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    networks:
+      - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: '0.25'
+  ```
 - `node-exporter` service (M9, M17 fix):
   ```yaml
   node-exporter:
@@ -642,7 +706,7 @@ Before the first deploy, the VPS must be configured with:
 
 1. A dedicated `deploy` user with minimal permissions (only `/opt/jpt/` write access and `docker compose` capability, no sudo).
 
-2. A deploy script at `/opt/jpt/deploy.sh` that restricts allowed operations:
+2. A deploy script at `/opt/jpt/deploy.sh` that restricts allowed operations (SA-P5-2 F2 fix — removed `rsync --server*` wildcard which allowed arbitrary file reads/writes; rsync is now handled by a separate `rrsync`-restricted SSH key):
    ```bash
    #!/bin/bash
    set -euo pipefail
@@ -660,17 +724,23 @@ Before the first deploy, the VPS must be configured with:
                     else \
                         echo "No previous images available for rollback" >&2; exit 1; \
                     fi ;;
-     rsync\ --server*) $SSH_ORIGINAL_COMMAND ;;
      *)             echo "Unknown command" >&2; exit 1 ;;
    esac
    ```
-
-3. An `authorized_keys` entry with restrictions:
+   `deploy.sh` must be owned by `root:root` with `755` permissions — the `deploy` user can execute it but cannot modify it:
+   ```bash
+   chown root:root /opt/jpt/deploy.sh
+   chmod 755 /opt/jpt/deploy.sh
    ```
-   command="/opt/jpt/deploy.sh",no-agent-forwarding,no-port-forwarding,no-pty ssh-ed25519 AAAA...
-   ```
 
-> **NOTE (SA-F6 fix):** The `command=` restriction ensures that even if the deploy SSH key is compromised, only the predefined operations in `deploy.sh` can be executed. The `rsync --server*` pattern allows rsync file transfer while blocking arbitrary commands. The `rollback` subcommand verifies `:previous` images exist before attempting restore (SA-F12 fix).
+3. Two `authorized_keys` entries — one for commands, one for rsync file transfer (SA-P5-2 F2 fix — separate keys with distinct restrictions):
+   ```
+   command="/opt/jpt/deploy.sh",no-agent-forwarding,no-port-forwarding,no-pty ssh-ed25519 AAAA... deploy-commands
+   command="/usr/bin/rrsync -wo /opt/jpt/",no-agent-forwarding,no-port-forwarding,no-pty ssh-ed25519 AAAA... deploy-rsync
+   ```
+   `rrsync -wo` = write-only, restricted to `/opt/jpt/`. No reads, no writes outside that directory. Requires two GitHub secrets: `DEPLOY_SSH_KEY` (commands) and `DEPLOY_RSYNC_KEY` (file transfer).
+
+> **NOTE (SA-F6 fix, SA-P5-2 F2 fix):** The `command=` restriction ensures that even if the deploy SSH key is compromised, only the predefined operations in `deploy.sh` can be executed. File transfer uses a separate SSH key restricted by `rrsync` to write-only access within `/opt/jpt/`, preventing arbitrary file reads or writes to other paths. The `rollback` subcommand verifies `:previous` images exist before attempting restore (SA-F12 fix).
 
 ```yaml
 name: Deploy
@@ -698,23 +768,25 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup SSH key (C11 fix)
+      - name: Setup SSH keys (C11 fix, SA-P5-2 F2 fix — separate keys for commands and rsync)
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.DEPLOY_RSYNC_KEY }}" > ~/.ssh/deploy_rsync_key
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/deploy_rsync_key
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
       - name: Tag current images for rollback (C8 fix)
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} tag-previous
-      - name: Rsync source to VPS (C13, SA-F7 fix — exclude production-managed files)
+      - name: Rsync source to VPS (C13, SA-F7 fix, SA-P5-2 F2 fix — rrsync-restricted key, exclude production-managed files)
         run: |
           rsync -avz --delete \
             --exclude='.env' \
             --exclude='secrets/' \
             --exclude='alertmanager.yml' \
             --exclude='certbot/' \
-            -e "ssh -i ~/.ssh/deploy_key" \
+            --exclude='deploy.sh' \
+            -e "ssh -i ~/.ssh/deploy_rsync_key" \
             ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jpt/
       - name: Build images and deploy on VPS (C12 fix)
         run: |
@@ -744,7 +816,8 @@ jobs:
 ```
 
 **Required GitHub secrets:**
-- `DEPLOY_SSH_KEY` — private key for VPS access (restricted by `command=` in `authorized_keys` — see above)
+- `DEPLOY_SSH_KEY` — private key for VPS command execution (restricted by `command="/opt/jpt/deploy.sh"` in `authorized_keys`)
+- `DEPLOY_RSYNC_KEY` — private key for VPS file transfer (restricted by `rrsync -wo /opt/jpt/` in `authorized_keys`) (SA-P5-2 F2 fix)
 - `VPS_HOST` — target server hostname
 - `VPS_USER` — deploy user on VPS (dedicated user with minimal permissions, no sudo)
 
@@ -764,17 +837,23 @@ git commit -m "ci: add backend/frontend/E2E/nginx-validate CI jobs, build-on-VPS
 
 ```typescript
 test('full user journey', async ({ page, browser }) => {
+    // Clear stale MailPit messages from prior runs (SA-P5-2 F5 fix)
+    await page.request.delete('http://localhost:8025/api/v1/messages');
+
     // 1. Register
 
     // 1b. Complete email verification via MailPit API (C21, C23 fix)
     //     Fetch verification email from MailPit, extract token, call /auth/verify
-    const messagesRes = await page.request.get('http://localhost:8025/api/v1/messages');
+    //     SA-P5-2 F5 fix — filter by recipient instead of taking messages[0]
+    const messagesRes = await page.request.get(
+      `http://localhost:8025/api/v1/search?query=to:${testEmail}`
+    );
     const messages = await messagesRes.json();
     const verifyEmail = messages.messages[0];
     const emailRes = await page.request.get(`http://localhost:8025/api/v1/message/${verifyEmail.ID}`);
     const emailData = await emailRes.json();
-    // Extract verification token from email body (C23 fix — match base64url tokens: [A-Za-z0-9_-]+)
-    const tokenMatch = emailData.Text.match(/\/auth\/verify\?token=([A-Za-z0-9_-]+)/);
+    // Extract verification token from email body (C23 fix — match base64url tokens, SA-P5-2 F6 fix — 43 chars)
+    const tokenMatch = emailData.Text.match(/\/auth\/verify\?token=([A-Za-z0-9_-]{43})/);
     // C23 fix — use POST with JSON body (not GET with query param)
     await page.request.post('/api/auth/verify', {
       data: { token: tokenMatch[1] }
@@ -829,6 +908,21 @@ git commit -m "test: full E2E journey — register through share and trash"
 
 ## Changelog
 
+### v8.0 (2026-03-12) — Security Audit #2 Remediation
+
+**Review:** `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-2.md`
+
+**Security audit findings fixed (SA-P5-2):**
+- **SA-P5-2 F1/F9** (Task 5.1): Replaced string concatenation in `SimpleEmailService` with `UriComponentsBuilder` for safe URL construction. Added `@PostConstruct` validation that `app.base-url` is a valid HTTP(S) URL. Fully specified `sendPasswordResetEmail` method with correct `/auth/reset-password` path (previously only a comment).
+- **SA-P5-2 F2** (Task 5.5): Replaced `rsync --server*` wildcard in `deploy.sh` with `rrsync`-restricted separate SSH key. The wildcard allowed arbitrary file reads/writes by anyone with the deploy key. Now uses two `authorized_keys` entries: one for commands (`deploy.sh`), one for file transfer (`rrsync -wo /opt/jpt/`). Added `deploy.sh` to rsync `--exclude` list. `deploy.sh` must be owned by `root:root` (755). Requires new `DEPLOY_RSYNC_KEY` GitHub secret.
+- **SA-P5-2 F3** (Task 5.1): Accepted JWT startup validation as-is — added clarifying comment that primary secret strength validation (256-bit minimum) is enforced by `JwtService`. Added `openssl rand -base64 64` generation instructions to `.env.example`.
+- **SA-P5-2 F4** (Task 5.1): Internalized BYPASSRLS DataSource — `ShareReaderDataSourceConfig` no longer registers a `DataSource` bean. Only `ShareLookupRepository` is exposed as a Spring bean, holding the DataSource internally via constructor injection. This prevents any other class from injecting the BYPASSRLS connection. ArchUnit test retained as defense-in-depth. Updated plan language to reflect that package-private visibility has no effect on Spring bean resolution.
+- **SA-P5-2 F5** (Task 5.6): Fixed E2E MailPit message retrieval — clear messages before test run, filter by recipient email instead of taking `messages[0]`. Prevents wrong email selection in concurrent CI or with stale data.
+- **SA-P5-2 F6** (Task 5.1/5.6): Corrected share token format from "hex string, 64 chars" to "base64url string, 43 chars" — the plan conflated the token format with the SHA-256 hash format. Tokens use base64url encoding (consistent with `RefreshTokenService`), hashes are stored as hex. Updated validation pattern, E2E regex, and documentation.
+- **SA-P5-2 F7** (Task 5.1): Accepted — `COOKIE_SECURE` defaults to `true`, CI override is correct and documented. No changes needed.
+- **SA-P5-2 F8** (Task 5.4): Removed `frontend` network from alertmanager — only `backend` needed for current scope (MailPit/SMTP reachable on `backend`). Added container hardening (`read_only`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `mem_limit: 64m`, `cpus: '0.25'`) matching all other services. When production external SMTP is needed, add a dedicated `smtp` network instead of `frontend`.
+- **SA-P5-2 F10** (Task 5.5): Accepted — CI CSP `img-src` divergence is a documented trade-off. No changes needed.
+
 ### v7.0 (2026-03-12) — Security Audit #1 + Critical Review #6 Remediation
 
 **Reviews:** `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-1.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-6.md`
@@ -853,7 +947,7 @@ git commit -m "test: full E2E journey — register through share and trash"
 
 **Minor issues fixed (Critical Review #6):**
 - **M31** (Task 5.1): Added `SMTP_PORT: ${SMTP_PORT:-587}` to API service environment in docker-compose — Spring Mail defaults to port 25/587, but MailPit uses 1025.
-- **M32** (Task 5.4): Added `frontend` network to alertmanager service — `backend` network is `internal: true`, preventing external SMTP access for alert email delivery.
+- **M32** (Task 5.4): Added `frontend` network to alertmanager service — `backend` network is `internal: true`, preventing external SMTP access for alert email delivery. (Subsequently revised in v8.0 — SA-P5-2 F8: removed `frontend`, kept `backend` only for current scope.)
 - **M33** (Task 5.1): Added `COOKIE_SECURE: ${COOKIE_SECURE:-true}` to API service environment in docker-compose, `COOKIE_SECURE=false` to `.env.ci` — Secure cookies over HTTP-only CI nginx prevented Playwright from sending auth cookies.
 
 **Clarification questions resolved (Critical Review #6):**
