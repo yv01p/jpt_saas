@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { apiFetch } from '../api/client';
-import { ApiError } from '../api/types';
 import type { Photo } from '../api/types';
 import PhotoGrid from '../components/PhotoGrid';
 
@@ -58,6 +57,7 @@ function SharedPhotoView({ photo, includeGps }: { photo: SharedPhoto; includeGps
 function SharedAlbumView({ token }: { token: string }) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [albumError, setAlbumError] = useState(false);
 
   useEffect(() => {
     apiFetch<PageResponse<Photo>>(`/api/share/${token}/photos?page=0&size=20`)
@@ -66,11 +66,13 @@ function SharedAlbumView({ token }: { token: string }) {
         setLoading(false);
       })
       .catch(() => {
+        setAlbumError(true);
         setLoading(false);
       });
   }, [token]);
 
   if (loading) return <div>Loading album...</div>;
+  if (albumError) return <p>Could not load album photos.</p>;
 
   return (
     <PhotoGrid
@@ -94,15 +96,8 @@ export default function SharePage() {
         setShareResponse(data);
         setLoading(false);
       })
-      .catch((err) => {
-        if (
-          err instanceof ApiError &&
-          (err.status === 404 || err.status === 410 || err.status === 500)
-        ) {
-          setError(true);
-        } else {
-          setError(true);
-        }
+      .catch(() => {
+        setError(true);
         setLoading(false);
       });
   }, [token]);

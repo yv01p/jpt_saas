@@ -88,7 +88,7 @@ const mockSharesPageWire = {
   size: 20,
 };
 
-test('shows "Loading shares..." while fetching shares', () => {
+test('shows "Loading shares..." while shares are loading', async () => {
   server.use(
     http.get('/api/users/me', () => HttpResponse.json(mockUserWire)),
     http.get('/api/shares', async () => {
@@ -97,9 +97,10 @@ test('shows "Loading shares..." while fetching shares', () => {
     }),
   );
   render(<SettingsPage />, { wrapper: QueryClientWrapper });
-  // The user/me query resolves fast (no delay), shares query is delayed
-  // We check the loading text immediately — but since user/me also loads, we just look for either loading state
-  expect(screen.getByTestId('quota-skeleton')).toBeInTheDocument();
+  // Wait for user profile to load (outer skeleton gone)
+  await screen.findByText(/gb of/i);
+  // Now shares section should show loading state
+  expect(screen.getByText(/loading shares/i)).toBeInTheDocument();
 });
 
 test('shows "No active shares." when list is empty', async () => {
