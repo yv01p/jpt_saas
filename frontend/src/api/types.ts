@@ -48,7 +48,7 @@ export interface Keyword {
   id: string;
   name: string;
   parentId: string | null;
-  children: Keyword[];
+  children?: Keyword[];
 }
 
 export interface ShareToken {
@@ -63,7 +63,7 @@ export interface ShareToken {
 }
 
 export interface SearchResult {
-  photos: Photo[];
-  total: number;
-  page: number;
+  content: Photo[];
+  totalElements: number;
+  number: number;
 }

@@ -36,7 +36,7 @@ export default function PhotoPage({ photoId }: PhotoPageProps) {
 
   const { data: allKeywords = [] } = useQuery<Keyword[]>({
     queryKey: ['keywords'],
-    queryFn: () => apiFetch('/api/keywords'),
+    queryFn: () => apiFetch<{ content: Keyword[] }>('/api/keywords').then((r) => r.content),
     enabled: showKeywordPicker,
     staleTime: 10 * 60 * 1000,
   });

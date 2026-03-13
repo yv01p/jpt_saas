@@ -46,8 +46,8 @@ function flattenKeywords(keywords: Keyword[]): Keyword[] {
   function traverse(kws: Keyword[]) {
     for (const kw of kws) {
       result.push(kw);
-      if (kw.children.length > 0) {
-        traverse(kw.children);
+      if ((kw.children ?? []).length > 0) {
+        traverse(kw.children!);
       }
     }
   }
@@ -66,9 +66,15 @@ function fetchSearch({
   page: number;
   size: number;
 }): Promise<SearchResult> {
+  if (filters.keywordId) {
+    const params = new URLSearchParams({ keywordId: filters.keywordId, page: String(page), size: String(size) });
+    return apiFetch<SearchResult>(`/api/search/keyword?${params}`);
+  }
+  if (filters.field && q) {
+    const params = new URLSearchParams({ field: filters.field, value: q, page: String(page), size: String(size) });
+    return apiFetch<SearchResult>(`/api/search/exif?${params}`);
+  }
   const params = new URLSearchParams({ q, page: String(page), size: String(size) });
-  if (filters.field) params.set('field', filters.field);
-  if (filters.keywordId) params.set('keywordId', filters.keywordId);
   return apiFetch<SearchResult>(`/api/search?${params}`);
 }
 
@@ -109,7 +115,7 @@ export default function SearchPage() {
   // Keywords query
   const { data: keywordsRaw = [] } = useQuery<Keyword[]>({
     queryKey: ['keywords'],
-    queryFn: () => apiFetch('/api/keywords'),
+    queryFn: () => apiFetch<{ content: Keyword[] }>('/api/keywords').then((r) => r.content),
     staleTime: 10 * 60 * 1000,
   });
 
@@ -132,15 +138,15 @@ export default function SearchPage() {
       }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) =>
-      lastPage.page * PAGE_SIZE + lastPage.photos.length < lastPage.total
-        ? lastPage.page + 1
+      lastPage.number * PAGE_SIZE + lastPage.content.length < lastPage.totalElements
+        ? lastPage.number + 1
         : undefined,
     enabled: searchEnabled,
     staleTime: 2 * 60 * 1000,
   });
 
   const photos = useMemo(
-    () => searchData?.pages.flatMap((p) => p.photos) ?? [],
+    () => searchData?.pages.flatMap((p) => p.content) ?? [],
     [searchData],
   );
 

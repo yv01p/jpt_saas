@@ -4,9 +4,14 @@ services:
   nginx:
     volumes:
       - ./nginx.ci.conf:/etc/nginx/nginx.conf:ro
-      - ./react-build:/usr/share/nginx/html:ro
+      - ./react-build/dist:/usr/share/nginx/html:ro
     ports:
       - "80:80"
+    # nginx.ci.conf proxies /jpt-photos/* to minio:9000 — minio is on backend network only,
+    # so nginx needs to join backend to resolve the hostname.
+    networks:
+      - frontend
+      - backend
 
   # Remove services not needed for E2E testing by assigning an inactive profile
   backup:
@@ -32,6 +37,81 @@ services:
 
   redis-exporter:
     profiles: [production-only]
+
+  # ARM64 host: override AMD64-pinned images with multi-arch tags
+  postgres:
+    image: postgres:16
+    # user: postgres bypasses gosu user-switching (which needs setuid capability)
+    user: postgres
+
+  redis:
+    image: redis:7-alpine
+    # user: redis bypasses gosu/su-exec user-switching
+    user: redis
+
+  minio-init:
+    # MC_CONFIG_DIR=/tmp so mc can write its config without needing /root writable
+    environment:
+      MC_CONFIG_DIR: /tmp/mc
+
+  # Cap CPU limits for single-CPU CI/dev hosts
+  api:
+    cpus: '1.0'
+    # Spring Boot needs ~180s to start on a single-CPU ARM64 host — generous start_period
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 240s
+    environment:
+      # e2e profile: uses SimpleEmailService (real SMTP) not StubEmailService
+      SPRING_PROFILES_ACTIVE: e2e
+      # Embed password in URL — Lettuce ignores spring.data.redis.password when url is set
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      # Use the Postgres superuser (DB_USER=jpt_app) for Flyway on a fresh CI database.
+      # docker-compose.yml omits FLYWAY_DB_USER, causing Spring to default to "jpt" which
+      # doesn't exist yet; jpt_app is the only user created by POSTGRES_USER init.
+      FLYWAY_DB_USER: ${DB_USER}
+      FLYWAY_DB_PASS: ${DB_PASS}
+      # WORKER_DB_PASS needed for Flyway placeholder worker_db_user_password (V3 migration)
+      WORKER_DB_PASS: ${WORKER_DB_PASS}
+      # Point SMTP at mailpit (no-auth, port 1025) for E2E email delivery
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      # Mailpit doesn't require SMTP auth; disable the MailHealthIndicator to prevent
+      # /actuator/health returning 503 (DOWN) due to auth failure
+      MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+      # HTTP-only CI environment — CSRF and auth cookies must not have Secure flag,
+      # otherwise browsers refuse to store/send them over plain HTTP
+      APP_COOKIE_SECURE: "false"
+      # Override public MinIO URL to internal Docker hostname so minioPublicClient can
+      # connect for presigned URL generation. URLs will contain minio:9000 which browsers
+      # can't resolve, but nginx proxies /jpt-photos/* → minio:9000 and E2E visibility
+      # checks (toBeVisible) test DOM presence, not image load success.
+      MINIO_PUBLIC_URL: "http://minio:9000"
+
+  worker:
+    cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/worker-heartbeat -mmin -1 | grep -q ."]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 240s
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      # worker/application.yml reads spring.datasource.username from ${DB_USER:jpt_worker}.
+      # V3 Flyway migration creates 'worker_db_user'; override DB_USER to match.
+      DB_USER: worker_db_user
+
+  # ARM64: MinIO image lacks curl; use mc (bundled) for health check
+  minio:
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set h http://127.0.0.1:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD --api S3v4 2>/dev/null && mc admin info h 2>/dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
 
   mailpit:
     image: axllent/mailpit:v1.21

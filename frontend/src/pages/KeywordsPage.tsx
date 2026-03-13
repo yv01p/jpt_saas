@@ -6,7 +6,7 @@ import type { Keyword } from '../api/types';
 function removeKeywordById(keywords: Keyword[], id: string): Keyword[] {
   return keywords
     .filter((kw) => kw.id !== id)
-    .map((kw) => ({ ...kw, children: removeKeywordById(kw.children, id) }));
+    .map((kw) => ({ ...kw, children: removeKeywordById(kw.children ?? [], id) }));
 }
 
 type FormMode =
@@ -45,9 +45,9 @@ function KeywordNode({ keyword, onAddChild, onEdit, onDelete }: KeywordNodeProps
       >
         Delete
       </button>
-      {keyword.children.length > 0 && (
+      {(keyword.children ?? []).length > 0 && (
         <ul>
-          {keyword.children.map((child) => (
+          {(keyword.children ?? []).map((child) => (
             <KeywordNode
               key={child.id}
               keyword={child}
@@ -69,7 +69,7 @@ export default function KeywordsPage() {
 
   const { data: keywords = [] } = useQuery<Keyword[]>({
     queryKey: ['keywords'],
-    queryFn: () => apiFetch('/api/keywords'),
+    queryFn: () => apiFetch<{ content: Keyword[] }>('/api/keywords').then((r) => r.content),
     staleTime: 10 * 60 * 1000,
   });
 

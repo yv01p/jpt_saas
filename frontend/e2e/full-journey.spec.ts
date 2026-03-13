@@ -150,13 +150,13 @@ test('full user journey', async ({ page, browser }) => {
     headers: { 'X-XSRF-TOKEN': freshCsrf },
   });
   const photosData = await photosRes.json();
-  expect(photosData.photos).toBeTruthy();
-  expect(photosData.photos.length).toBeGreaterThan(0);
+  expect(photosData.content).toBeTruthy();
+  expect(photosData.content.length).toBeGreaterThan(0);
 
   // Find our photo by filename
-  const uploadedPhoto = photosData.photos.find(
+  const uploadedPhoto = photosData.content.find(
     (p: { filename: string }) => p.filename === photoFilename
-  ) ?? photosData.photos[0];
+  ) ?? photosData.content[0];
   const photoId: string = uploadedPhoto.id;
 
   // Poll until processing is DONE
@@ -260,9 +260,9 @@ test('full user journey', async ({ page, browser }) => {
   const csrfForShare = await getXsrfToken(page);
   const shareRes = await page.request.post('/api/shares', {
     data: {
-      resource_type: 'photo',
-      resource_id: photoId,
-      include_gps: false,
+      resourceType: 'photo',
+      resourceId: photoId,
+      includeGps: false,
     },
     headers: {
       'Content-Type': 'application/json',

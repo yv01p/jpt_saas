@@ -23,7 +23,7 @@ export default function TrashPage() {
 
   const { data: photos = [], isLoading, isError } = useQuery<Photo[]>({
     queryKey: ['trash'],
-    queryFn: () => apiFetch('/api/photos/trash'),
+    queryFn: () => apiFetch<{ content: Photo[] }>('/api/photos/trash').then((r) => r.content),
     staleTime: 60 * 1000,
   });
 

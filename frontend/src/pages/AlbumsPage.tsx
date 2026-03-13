@@ -3,10 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
 import type { Album, Photo } from '../api/types';
 
-interface AlbumDetail extends Album {
-  photos: Photo[];
-}
-
 export default function AlbumsPage() {
   const queryClient = useQueryClient();
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
@@ -15,13 +11,20 @@ export default function AlbumsPage() {
 
   const { data: albums = [], isPending: albumsLoading, isError: albumsError } = useQuery<Album[]>({
     queryKey: ['albums'],
-    queryFn: () => apiFetch('/api/albums'),
+    queryFn: () => apiFetch<{ content: Album[] }>('/api/albums').then((r) => r.content),
     staleTime: 10 * 60 * 1000,
   });
 
-  const { data: albumDetail } = useQuery<AlbumDetail>({
+  const { data: albumDetail } = useQuery<Album>({
     queryKey: ['album', selectedAlbumId],
     queryFn: () => apiFetch(`/api/albums/${encodeURIComponent(selectedAlbumId!)}`),
+    enabled: selectedAlbumId !== null,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: albumPhotos = [] } = useQuery<Photo[]>({
+    queryKey: ['album-photos', selectedAlbumId],
+    queryFn: () => apiFetch(`/api/albums/${encodeURIComponent(selectedAlbumId!)}/photos`),
     enabled: selectedAlbumId !== null,
     staleTime: 5 * 60 * 1000,
   });
@@ -32,7 +35,7 @@ export default function AlbumsPage() {
         method: 'POST',
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['album', selectedAlbumId] });
+      queryClient.invalidateQueries({ queryKey: ['album-photos', selectedAlbumId] });
       setShowAddPhoto(false);
       setAddPhotoId('placeholder');
     },
@@ -44,10 +47,9 @@ export default function AlbumsPage() {
         method: 'DELETE',
       }),
     onSuccess: (_data, { albumId, photoId }) => {
-      queryClient.setQueryData<AlbumDetail>(['album', albumId], (old) => {
-        if (!old) return old;
-        return { ...old, photos: old.photos.filter((p) => p.id !== photoId) };
-      });
+      queryClient.setQueryData<Photo[]>(['album-photos', albumId], (old) =>
+        old ? old.filter((p) => p.id !== photoId) : [],
+      );
     },
   });
 
@@ -90,7 +92,7 @@ export default function AlbumsPage() {
         <div className="album-detail">
           <h2>{albumDetail.name}</h2>
           <div className="album-photos">
-            {albumDetail.photos.map((photo) => (
+            {albumPhotos.map((photo) => (
               <div key={photo.id} className="album-photo">
                 <img src={photo.thumbnailUrl} alt={photo.filename} />
                 <button

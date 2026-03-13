@@ -36,7 +36,7 @@ public class JwtService {
 
     @PostConstruct
     void validateSecret() {
-        if (environment == null || !environment.acceptsProfiles(Profiles.of("dev", "test"))) {
+        if (environment == null || !environment.acceptsProfiles(Profiles.of("dev", "test", "e2e"))) {
             if (jwtSecret.length() < 43) {
                 throw new IllegalStateException(
                         "JWT_SECRET must be >= 256 bits (43+ base64 chars)");

@@ -13,6 +13,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -92,5 +93,16 @@ public class AlbumService {
     public void removePhoto(UUID userId, UUID albumId, UUID photoId) {
         getAlbum(userId, albumId);
         albumPhotoRepository.deleteByAlbumIdAndPhotoIdAndUserId(albumId, photoId, userId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Photo> getAlbumPhotos(UUID userId, UUID albumId) {
+        getAlbum(userId, albumId);
+        List<AlbumPhoto> links = albumPhotoRepository.findByAlbumIdAndUserId(albumId, userId);
+        if (links.isEmpty()) return List.of();
+        List<UUID> photoIds = links.stream().map(AlbumPhoto::getPhotoId).toList();
+        return photoRepository.findAllById(photoIds).stream()
+                .filter(p -> p.getDeletedAt() == null)
+                .toList();
     }
 }

@@ -17,7 +17,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
-import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -88,16 +87,14 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * SPA-friendly CSRF token request handler. Uses XorCsrfTokenRequestAttributeHandler
-     * as delegate to handle the X-XSRF-TOKEN header from SPAs, while extending
-     * CsrfTokenRequestAttributeHandler to properly resolve the token value.
+     * SPA-friendly CSRF token request handler. Uses base CsrfTokenRequestAttributeHandler
+     * which does a raw string comparison — correct for SPAs that read the raw UUID from
+     * the XSRF-TOKEN cookie and send it as X-XSRF-TOKEN without XOR encoding.
      */
     private static CsrfTokenRequestAttributeHandler spaCsrfTokenRequestHandler() {
-        CsrfTokenRequestAttributeHandler delegate = new XorCsrfTokenRequestAttributeHandler();
-        // XorCsrfTokenRequestAttributeHandler resolves BREACH-protected tokens
-        // but we need plain handler for attribute setting
-        delegate.setCsrfRequestAttributeName(null);
-        return delegate;
+        CsrfTokenRequestAttributeHandler handler = new CsrfTokenRequestAttributeHandler();
+        handler.setCsrfRequestAttributeName(null);
+        return handler;
     }
 
     @Bean

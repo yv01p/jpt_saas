@@ -40,7 +40,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
-      EMAIL_FROM: ${EMAIL_FROM:noreply@yourdomain.com}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@yourdomain.com}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       FLYWAY_DB_PASS: ${FLYWAY_DB_PASS}
       JPT_AUTH_PASSWORD: ${JPT_AUTH_PASSWORD}
@@ -177,11 +177,11 @@ services:
         mc mb --ignore-existing minio/jpt-photos &&
         (mc admin user add minio $$MINIO_API_ACCESS_KEY $$MINIO_API_SECRET_KEY || true) &&
         (mc admin policy attach minio readwrite --user $$MINIO_API_ACCESS_KEY || true) &&
-        echo '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::jpt-photos/*\"]}]}' > /tmp/presign-only-policy.json &&
+        echo '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::jpt-photos/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetBucketLocation\"],\"Resource\":[\"arn:aws:s3:::jpt-photos\"]}]}' > /tmp/presign-only-policy.json &&
         (mc admin policy create minio presign-only /tmp/presign-only-policy.json || true) &&
         (mc admin user add minio $$MINIO_API_PRESIGN_ACCESS_KEY $$MINIO_API_PRESIGN_SECRET_KEY || true) &&
         (mc admin policy attach minio presign-only --user $$MINIO_API_PRESIGN_ACCESS_KEY || true) &&
-        echo '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::jpt-photos/*/originals/*","arn:aws:s3:::jpt-photos/*/thumbnails/*"]}]}' > /tmp/worker-policy.json &&
+        echo '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\"],\"Resource\":[\"arn:aws:s3:::jpt-photos/*/originals/*\",\"arn:aws:s3:::jpt-photos/*/thumbnails/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetBucketLocation\"],\"Resource\":[\"arn:aws:s3:::jpt-photos\"]}]}' > /tmp/worker-policy.json &&
         (mc admin user add minio $$MINIO_WORKER_ACCESS_KEY $$MINIO_WORKER_SECRET_KEY || true) &&
         (mc admin policy create minio worker-scoped-policy /tmp/worker-policy.json || true) &&
         (mc admin policy attach minio worker-scoped-policy --user $$MINIO_WORKER_ACCESS_KEY || true) &&

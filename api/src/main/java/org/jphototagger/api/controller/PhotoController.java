@@ -48,7 +48,7 @@ public class PhotoController {
         this.keywordRepository = keywordRepository;
     }
 
-    @PostMapping("/upload")
+    @PostMapping
     public ResponseEntity<PhotoResponse> uploadPhoto(
             @AuthenticationPrincipal UUID userId,
             @RequestParam("file") MultipartFile file) {

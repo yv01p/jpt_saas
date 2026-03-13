@@ -1,0 +1,22 @@
+# application-test.yml — loaded when SPRING_PROFILES_ACTIVE=test (Docker E2E stack only)
+#
+# NOTE: src/test/resources/application-test.yml takes precedence over this file during
+# Maven unit/integration tests (test classpath ordering). This file is only active when
+# running the built JAR (Docker) with SPRING_PROFILES_ACTIVE=test.
+#
+# Purpose: provide dummy OAuth2 client registrations so Spring Boot can create the
+# ClientRegistrationRepository bean required by .oauth2Login() in SecurityConfig.
+# The credentials are non-functional — E2E tests use email/password auth only.
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:ci-unused}
+            client-secret: ${GOOGLE_CLIENT_SECRET:ci-unused}
+            scope: openid,email,profile
+          github:
+            client-id: ${GITHUB_CLIENT_ID:ci-unused}
+            client-secret: ${GITHUB_CLIENT_SECRET:ci-unused}
+            scope: "read:user,user:email"

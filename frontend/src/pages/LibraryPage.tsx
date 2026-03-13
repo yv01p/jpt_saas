@@ -21,13 +21,13 @@ export default function LibraryPage() {
     queryFn: ({ pageParam }) => fetchPhotos({ page: pageParam as number, size: PAGE_SIZE }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) =>
-      lastPage.page * PAGE_SIZE + lastPage.photos.length < lastPage.total
-        ? lastPage.page + 1
+      lastPage.number * PAGE_SIZE + lastPage.content.length < lastPage.totalElements
+        ? lastPage.number + 1
         : undefined,
     staleTime: 10 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
     refetchInterval: (query) => {
-      const photos = query.state.data?.pages.flatMap((p) => p.photos) ?? [];
+      const photos = query.state.data?.pages.flatMap((p) => p.content) ?? [];
       return photos.some(
         (p) => p.processingStatus === 'PENDING' || p.processingStatus === 'PROCESSING'
       )
@@ -37,7 +37,7 @@ export default function LibraryPage() {
   });
 
   const photos = useMemo(
-    () => data?.pages.flatMap((page) => page.photos) ?? [],
+    () => data?.pages.flatMap((page) => page.content) ?? [],
     [data]
   );
 
