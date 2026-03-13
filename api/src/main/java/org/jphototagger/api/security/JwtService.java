@@ -45,6 +45,10 @@ public class JwtService {
                 throw new IllegalStateException(
                         "Default JWT_SECRET detected in non-dev profile");
             }
+            // Guard against deploying with .env.ci values. Primary secret strength validation (256-bit minimum) enforced above.
+            if (jwtSecret.startsWith("ci_test")) {
+                throw new IllegalStateException("CI test JWT secret detected — do not use .env.ci in production");
+            }
         }
     }
 

@@ -60,7 +60,9 @@ public class SecurityConfig implements WebMvcConfigurer {
                 csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(cookieSecure));
                 csrf.csrfTokenRepository(csrfRepo)
                 .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
-                .ignoringRequestMatchers("/auth/refresh",
+                .ignoringRequestMatchers(
+                        "/auth/refresh",    // refresh token in httpOnly cookie is proof of possession
+                        "/auth/verify",     // SA-P5-3 F3: verification token is single-use 256-bit secret
                         "/login/oauth2/code/*");
             })
             // CSP, HSTS, and Permissions-Policy are managed exclusively by nginx
@@ -74,7 +76,7 @@ public class SecurityConfig implements WebMvcConfigurer {
                     response.getWriter().write("{\"error\":\"Unauthorized\",\"status\":401}");
                 }))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/**", "/actuator/health", "/csrf").permitAll()
+                .requestMatchers("/auth/**", "/actuator/health", "/csrf", "/share/**").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .successHandler(oAuth2SuccessHandler))

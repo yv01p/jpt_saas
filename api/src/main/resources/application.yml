@@ -31,6 +31,7 @@ spring:
       jpt_app_password: ${DB_PASS}
       worker_db_user_password: ${WORKER_DB_PASS}
       jpt_auth_password: ${JPT_AUTH_PASSWORD}
+      share_reader_password: ${SHARE_READER_PASSWORD}
   auth-datasource:
     url: ${SPRING_DATASOURCE_URL:${DB_URL:jdbc:postgresql://localhost:5432/jpt}}
     username: jpt_auth
@@ -39,6 +40,17 @@ spring:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
       password: ${REDIS_PASSWORD}
+    web:
+      pageable:
+        max-page-size: 200
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASS:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
 
 jpt:
   trash:
@@ -55,6 +67,13 @@ app:
     auth: 20          # auth attempts per hour per IP
   cookie-secure: ${COOKIE_SECURE:true}
   default-share-days: 30
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  email:
+    from: ${EMAIL_FROM:noreply@yourdomain.com}
+  share-reader:
+    jdbc-url: ${DB_URL:jdbc:postgresql://localhost:5432/jpt}
+    username: share_reader
+    password: ${SHARE_READER_PASSWORD}
 
 server:
   forward-headers-strategy: native   # SA9-F2: use Tomcat RemoteIpValve with trusted proxy allowlist

@@ -7,6 +7,13 @@ app:
     upload: 3       # low limits for fast test execution (RateLimitFilterTest relies on this)
     general: 100    # high enough for CRUD tests; RateLimitFilterTest overrides to 5 via @DynamicPropertySource
     auth: 20        # high enough not to break AuthControllerTest (RateLimitFilterTest overrides to 3)
+  base-url: http://localhost:8080
+  email:
+    from: test@test.localhost
+  share-reader:
+    jdbc-url: ${DB_URL:jdbc:postgresql://localhost:5432/jpt}
+    username: test
+    password: test_share_reader_password
 
 spring:
   datasource:
@@ -27,6 +34,7 @@ spring:
       jpt_app_password: test_app_password
       worker_db_user_password: test_worker_password
       jpt_auth_password: test_auth_password  # [v4 CR3-C3]
+      share_reader_password: test_share_reader_password
   security:
     oauth2:
       client:
@@ -61,3 +69,6 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    mail:
+      enabled: false
