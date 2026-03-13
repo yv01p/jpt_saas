@@ -24,6 +24,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.Map;
 import java.util.UUID;
 
+import org.hamcrest.Matchers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -180,15 +182,25 @@ class ShareServiceTest {
     }
 
     @Test
-    void shareStripsGpsByDefault() {
-        // GPS stripping: includeGps=false should strip GPS fields from EXIF
+    void shareStripsGpsByDefault() throws Exception {
+        // Insert photo_metadata with GPS-containing EXIF data for the test photo
         String exifWithGps = "{\"Make\":\"Canon\",\"GPS Latitude\":\"48.8566\",\"GPS Longitude\":\"2.3522\",\"Model\":\"EOS R5\"}";
-        String stripped = shareService.stripGpsFromExif(exifWithGps);
+        jdbcTemplate.update(
+            "INSERT INTO photo_metadata (photo_id, user_id, exif_data) VALUES (?, ?, ?::jsonb)",
+            photoId, userId, exifWithGps);
 
-        assertThat(stripped).doesNotContain("GPS Latitude");
-        assertThat(stripped).doesNotContain("GPS Longitude");
-        assertThat(stripped).contains("Make");
-        assertThat(stripped).contains("Model");
+        // Create a share with includeGps=false
+        var result = shareService.createShare(userId, "photo", photoId, false);
+        String token = result.plaintextToken();
+
+        // Look up the share via HTTP — GPS fields must be absent from the response
+        mockMvc.perform(get("/share/" + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.photo.exif_data").exists())
+            .andExpect(jsonPath("$.photo.exif_data").value(Matchers.not(Matchers.containsString("GPS Latitude"))))
+            .andExpect(jsonPath("$.photo.exif_data").value(Matchers.not(Matchers.containsString("GPS Longitude"))))
+            .andExpect(jsonPath("$.photo.exif_data").value(Matchers.containsString("Make")))
+            .andExpect(jsonPath("$.photo.exif_data").value(Matchers.containsString("Model")));
     }
 
     @Test

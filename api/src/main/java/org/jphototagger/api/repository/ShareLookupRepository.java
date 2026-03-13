@@ -59,12 +59,16 @@ public class ShareLookupRepository {
 
     /**
      * Look up a photo by ID for a public share (used when share resource_type = 'photo').
+     * Also JOINs photo_metadata to return EXIF/IPTC/XMP data for GPS stripping.
      */
     public Optional<Map<String, Object>> findPhotoById(UUID photoId) {
         var results = jdbc.queryForList(
             "SELECT p.id, p.filename, p.caption, p.title, p.description, " +
-            "       p.size_bytes, p.taken_at, p.uploaded_at, p.processing_status, p.storage_key " +
-            "FROM photos p WHERE p.id = ? AND p.deleted_at IS NULL",
+            "       p.size_bytes, p.taken_at, p.uploaded_at, p.processing_status, p.storage_key, " +
+            "       pm.exif_data, pm.iptc_data, pm.xmp_data " +
+            "FROM photos p " +
+            "LEFT JOIN photo_metadata pm ON pm.photo_id = p.id " +
+            "WHERE p.id = ? AND p.deleted_at IS NULL",
             photoId);
         return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
     }

@@ -95,6 +95,15 @@ public class ShareController {
             }
             Map<String, Object> photo = new HashMap<>(photoOpt.get());
 
+            // Strip GPS fields from EXIF data when includeGps=false
+            if (!includeGps) {
+                Object exifData = photo.get("exif_data");
+                if (exifData != null) {
+                    String strippedExif = shareService.stripGpsFromExif(exifData.toString());
+                    photo.put("exif_data", strippedExif);
+                }
+            }
+
             // Generate presigned URLs if storage_key is available
             Object storageKey = photo.get("storage_key");
             if (storageKey != null) {
