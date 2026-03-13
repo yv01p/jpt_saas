@@ -22,14 +22,20 @@ This spec covers complete fixes for all findings from the 2026-03-13 security sc
 
 **Root cause:** The dummy hash string used for unknown-email paths is 65 characters long. `BCryptPasswordEncoder.matches()` requires exactly 60 characters (7-char `$2a$12$` prefix + 53-char hash body) or it fails a regex check immediately (~1 µs) without running BCrypt (~250 ms). Unknown emails return in ~1 ms; known emails with wrong password return in ~250 ms — a reliable enumeration oracle.
 
-**Fix:** Replace the hardcoded invalid constant with a field initialised once at class-load time:
+**Fix:** Replace the hardcoded invalid constant with a lazy `AtomicReference` backed by the injected `PasswordEncoder` bean:
 
 ```java
-private static final String DUMMY_HASH =
-    new BCryptPasswordEncoder(12).encode("__dummy__credential__for__timing__equalization__");
+private final AtomicReference<String> dummyHash = new AtomicReference<>();
+
+private String getDummyHash() {
+    return dummyHash.updateAndGet(h -> h != null ? h :
+        passwordEncoder.encode("__dummy__credential__for__timing__equalization__"));
+}
 ```
 
-`BCryptPasswordEncoder(12).encode()` always produces a syntactically valid 60-character BCrypt string, so `matches()` runs full BCrypt. The one-time cost at class load (~250 ms) is acceptable. No hardcoded string is stored in source.
+`getDummyHash()` calls `this.passwordEncoder` — the actual injected encoder bean — so the cost factor always matches the application-wide BCrypt configuration. The hash is computed once on first use (first unknown-email login attempt) and then cached in the `AtomicReference`. `authenticate()` calls `passwordEncoder.matches(pw, getDummyHash())` instead of the old constant.
+
+**Why `AtomicReference` over `static final`:** A static field initialiser with `new BCryptPasswordEncoder(12)` hard-codes the cost factor at 12. If the application bean is later reconfigured to a different cost factor (e.g., 13), the dummy hash and the real hashes diverge, recreating the timing gap. Using the injected bean guarantees the cost factor always matches regardless of configuration.
 
 ### Finding #2 — HTTP status oracle enables lockout-free brute-force on unverified accounts
 
@@ -65,12 +71,15 @@ This helper replaces both branches of the existing wrong-password UPDATE, and is
 
 **`authenticate()` method flow after all three fixes:**
 
-1. Query user by email. If not found → `passwordEncoder.matches(pw, DUMMY_HASH)` → throw `BadCredentialsException`.
+1. Query user by email. If not found → `passwordEncoder.matches(pw, getDummyHash())` → throw `BadCredentialsException`.
 2. Always call `passwordEncoder.matches(pw, storedHash)` (timing preservation; result stored in `passwordCorrect`).
-3. If `!passwordCorrect` → `incrementFailedAttempts(userId)` → throw `BadCredentialsException`.
-4. If correct password but `isLocked` (lockout still active) → throw `BadCredentialsException`.
-5. If correct password, not locked, `!emailVerified` → `incrementFailedAttempts(userId)` → throw `EmailVerificationRequiredException`.
-6. Success → `UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?` → return `{userId, email}`.
+3. Evaluate `isLocked` from the initial SELECT result (fields `failedLoginAttempts`, `lockedUntil` read at query time). **No re-fetch occurs within this call.**
+4. If `!passwordCorrect` → `incrementFailedAttempts(userId)` → throw `BadCredentialsException`.
+5. If correct password but `isLocked` (lockout still active per step 3 evaluation) → throw `BadCredentialsException`.
+6. If correct password, not locked, `!emailVerified` → `incrementFailedAttempts(userId)` → throw `EmailVerificationRequiredException`.
+7. Success → `UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?` → return `{userId, email}`.
+
+> **Ordering note:** `isLocked` is evaluated before any `incrementFailedAttempts()` call (step 3 precedes steps 4–6). When a wrong-password attempt causes the threshold to be crossed, the atomic SQL sets `lockedUntil` in the DB, but `isLocked` in memory remains `false`. The caller correctly receives `BadCredentialsException` (step 4). On the *next* request the user will be locked — `isLocked` will be `true` from the fresh SELECT. This is correct; no re-evaluation within a single call is needed or desirable.
 
 ---
 
@@ -87,23 +96,23 @@ This helper replaces both branches of the existing wrong-password UPDATE, and is
 
 **Root cause:** `ShareService.stripGpsFromExif()` only strips EXIF. IPTC fields (City, Sub-location, Province-State, Country) and XMP fields (photoshop:City, iptc4xmpcore:Location, etc.) are written raw to the share response even when `includeGps=false`. The authenticated path (`PhotoMetadataResponse.withoutGps()`) correctly handles all three metadata types; the share path has a separate, incomplete implementation — the classic divergent-implementation failure mode.
 
-**Fix:** Create `MetadataLocationStripper` — a Spring `@Component` utility with three **Map-based** public methods (operating on `Map<String,Object>`, not JSON strings). Each method returns `null` for `null` input (fail-closed; consistent with `PhotoMetadataResponse`'s existing private filter methods):
+**Fix:** Create `MetadataLocationStripper` — a **plain utility class** (no `@Component`, no Spring dependency) with three **static Map-based** public methods (operating on `Map<String,Object>`, not JSON strings). Static methods eliminate the Spring injection requirement so `PhotoMetadataResponse` (a `record`) can call them directly without constructor changes. Each method returns `null` for `null` input (fail-closed; consistent with `PhotoMetadataResponse`'s existing private filter methods):
 
 ```java
 /** Removes GPS-related keys from EXIF data. Returns null for null input. */
-public Map<String, Object> filterGpsFromExif(Map<String, Object> exif)
+public static Map<String, Object> filterGpsFromExif(Map<String, Object> exif)
 
 /** Removes location-related keys from IPTC data. Returns null for null input. */
-public Map<String, Object> filterLocationFromIptc(Map<String, Object> iptc)
+public static Map<String, Object> filterLocationFromIptc(Map<String, Object> iptc)
 
 /** Removes GPS and location-related keys from XMP data. Returns null for null input. */
-public Map<String, Object> filterLocationFromXmp(Map<String, Object> xmp)
+public static Map<String, Object> filterLocationFromXmp(Map<String, Object> xmp)
 ```
 
 **Key sets — `PhotoMetadataResponse` is authoritative.** The stripper uses the exact same sets defined there, making `PhotoMetadataResponse` the single source of truth:
 
 ```java
-// IPTC — 9 elements, matches PhotoMetadataResponse.IPTC_LOCATION_KEYS exactly:
+// IPTC — 10 elements, matches PhotoMetadataResponse.IPTC_LOCATION_KEYS exactly:
 private static final Set<String> IPTC_LOCATION_KEYS = Set.of(
     "iptc:sub-location", "iptc:city", "iptc:province-state",
     "iptc:country-primary location code", "iptc:country-primary location name",
@@ -120,11 +129,13 @@ private static final Set<String> XMP_LOCATION_KEYS = Set.of(
 
 All key comparisons use `entry.getKey().toLowerCase()` (case-insensitive), matching the existing `PhotoMetadataResponse` behaviour.
 
-`filterGpsFromExif` removes keys where `lower.contains("gps") || lower.startsWith("gps:")`.
+`filterGpsFromExif` removes keys where `lower.contains("gps")`.
 `filterLocationFromIptc` removes keys where `IPTC_LOCATION_KEYS.contains(lower)`.
 `filterLocationFromXmp` removes keys where `lower.contains("gps") || XMP_LOCATION_KEYS.contains(lower)`.
 
-**`PhotoMetadataResponse.withoutGps()`** is updated to delegate to `MetadataLocationStripper` instead of its own private methods. The three private methods (`filterGpsKeys`, `filterLocationKeys`, `filterGpsAndLocationKeys`) are removed. `MetadataLocationStripper` is injected via a static holder or passed via a factory — since `PhotoMetadataResponse` is a record, inject `MetadataLocationStripper` into the `from()` factory and pass it, or make the stripper's methods static (acceptable since the key sets are compile-time constants). **Use static methods** on `MetadataLocationStripper` to avoid changing `PhotoMetadataResponse`'s constructor signature.
+> **Predicate note:** The existing `ShareService.stripGpsFromExif()` uses `GPS_KEY_PATTERN = Pattern.compile("(?i)gps.*")` with `matches()` (full-string anchor), which only strips keys whose *entire name* starts with `"gps"` — it misses composite keys like `"EXIF:GPSLatitude"`. The authenticated path (`PhotoMetadataResponse.filterGpsKeys()`) uses `lower.contains("gps")`, which correctly strips all GPS-related keys regardless of prefix. The stripper adopts the authenticated path's `contains("gps")` predicate — this is an intentional broadening to fix the coverage gap. The old `GPS_KEY_PATTERN` in `ShareService` is removed when `stripGpsFromExif()` delegates to the stripper.
+
+**`PhotoMetadataResponse.withoutGps()`** is updated to delegate to `MetadataLocationStripper`'s static methods directly — e.g., `MetadataLocationStripper.filterGpsFromExif(this.exif())`. The three private methods (`filterGpsKeys`, `filterLocationKeys`, `filterGpsAndLocationKeys`) are removed. No constructor/factory signature changes are needed: static calls are valid from inside a record's instance method.
 
 **`ShareService`** gains three JSON-wrapper methods (parse JSON → call stripper → serialize back to JSON), which is exactly the pattern already used by `stripGpsFromExif()`:
 
@@ -164,6 +175,8 @@ photo.remove("storage_key");
 1. Generate presigned URLs using the same key-parsing logic as `getShare()` (split `storage_key` on `/`, parse `photoId` from `parts[2]`). Use `shareData.get("user_id")` as `photoOwnerId`.
 2. Remove `storage_key` from the photo map.
 
+> **No GPS/location stripping needed:** `findAlbumPhotos()` does not join `photo_metadata` — the result maps contain no `exif_data`, `iptc_data`, or `xmp_data` columns. Location data cannot leak from album photo responses. Only `findPhotoById()` (single-photo shares) joins `photo_metadata` and requires stripping.
+
 ```java
 UUID albumOwnerId = (UUID) shareData.get("user_id");
 return shareLookupRepository.findAlbumPhotos(albumId, capped).map(rawPhoto -> {
@@ -194,7 +207,17 @@ return shareLookupRepository.findAlbumPhotos(albumId, capped).map(rawPhoto -> {
 
 **Fix:** Add `ownerId` parameter: `findPhotoById(UUID photoId, UUID ownerId)`. Add `AND p.user_id = ?` as a third bind parameter in the WHERE clause.
 
-`findShareByTokenHash()` already selects `s.user_id`, so `ShareController.getShare()` passes `(UUID) shareData.get("user_id")` as `ownerId` — no additional query required.
+`findShareByTokenHash()` already selects `s.user_id`, so `ShareController.getShare()` updates its call site:
+
+```java
+// Before:
+var photoOpt = shareLookupRepository.findPhotoById(resourceId);
+// After:
+UUID ownerId = (UUID) shareData.get("user_id");
+var photoOpt = shareLookupRepository.findPhotoById(resourceId, ownerId);
+```
+
+No additional query required — `ownerId` is already available in `shareData`.
 
 ---
 
@@ -213,16 +236,29 @@ return shareLookupRepository.findAlbumPhotos(albumId, capped).map(rawPhoto -> {
 
 **Fix pattern:** Replace all primary-datasource `photoRepository`/`userRepository` calls in schedulers with `authJdbcTemplate` (BYPASSRLS, `jpt_auth` role) SQL queries.
 
-**DB permissions prerequisite:** `jpt_auth` currently holds `SELECT, INSERT` on `users` and `SELECT, INSERT, DELETE` on `email_tokens` (V4 migration). The existing `UnverifiedAccountPurgeScheduler` already issues `DELETE FROM photos` via `authJdbcTemplate`, confirming the role has at minimum DELETE on photos (likely granted outside the reviewed migrations). To be explicit and safe, add migration:
+**DB permissions prerequisite:** `jpt_auth` currently holds `SELECT, INSERT` on `users` (column-level UPDATE on specific columns) and `SELECT, INSERT, DELETE` on `email_tokens` (V4 migration). The reviewed migrations (V1–V13) do not include grants for `photos`, `album_photos`, `albums`, `saved_searches`, `shares`, or `keywords` to `jpt_auth`. However, `UnverifiedAccountPurgeScheduler` already runs DML against all of these tables via `authJdbcTemplate` in production (`DELETE FROM album_photos`, `DELETE FROM photos`, `DELETE FROM albums`, `DELETE FROM saved_searches`, `DELETE FROM shares`, `UPDATE/DELETE keywords`, `DELETE FROM users`). This confirms that `jpt_auth` already holds the required permissions — they were granted outside the reviewed Flyway migrations (likely in the initial DB setup or a bootstrap script).
+
+V14 adds only the grants that are **provably missing** from the reviewed migrations AND newly required by the scheduler fixes in this spec. All `GRANT` statements are idempotent — harmless if they already exist:
 
 ```sql
--- V14__grant_photos_select_to_jpt_auth.sql
--- Grants jpt_auth SELECT on photos so background schedulers can query
--- purgeable photo sets via BYPASSRLS without going through jpt_app (RLS-blocked).
+-- V14__grant_scheduler_permissions_to_jpt_auth.sql
+-- Grants jpt_auth the permissions required by TrashPurgeScheduler and
+-- OrphanReconciliationScheduler after migrating from photoRepository (RLS-blocked)
+-- to authJdbcTemplate (BYPASSRLS).
+--
+-- UnverifiedAccountPurgeScheduler already uses authJdbcTemplate for DML against
+-- album_photos, photos, albums, saved_searches, shares, keywords, email_tokens,
+-- and users — those grants already exist (confirmed by scheduler running in prod).
+
+-- TrashPurgeScheduler needs SELECT to query purgeable batches:
 GRANT SELECT ON photos TO jpt_auth;
+-- TrashPurgeScheduler.purgeNullStorageKeyPhotos() CTE issues DELETE FROM photos:
+GRANT DELETE ON photos TO jpt_auth;
+-- TrashPurgeScheduler.purgeNullStorageKeyPhotos() CTE issues UPDATE users SET used_bytes:
+GRANT UPDATE (used_bytes) ON users TO jpt_auth;
 ```
 
-If the grant already exists, `GRANT` is idempotent and harmless.
+> **Note on existing grants:** If `jpt_auth` already holds `SELECT`/`DELETE` on `photos` (as implied by `UnverifiedAccountPurgeScheduler` working), these `GRANT` statements are no-ops. The only grant that is definitively new is `UPDATE (used_bytes) ON users` — the reviewed V4/V11 migrations only grant column-level UPDATE on `(password_hash, failed_login_attempts, locked_until, email_verified, oauth_provider, oauth_id, updated_at)`, which does not include `used_bytes`.
 
 ---
 
@@ -312,10 +348,12 @@ Inject `@Qualifier("authJdbcTemplate") JdbcTemplate authJdbc`. Remove `photoRepo
 ```java
 List<Map<String, Object>> batch = authJdbc.queryForList(
     "SELECT id, user_id, storage_key FROM photos " +
-    "WHERE deleted_at < ? AND storage_key IS NOT NULL " +
+    "WHERE deleted_at < ? " +
     "LIMIT 100",
     Timestamp.from(cutoff));
 ```
+
+> **No `storage_key IS NOT NULL` filter:** The original `findPurgeableBatch()` returns all soft-deleted photos past the cutoff, including those with null `storage_key` (e.g., incomplete uploads that a user soft-deleted before processing finished). `enqueueByRows()` already logs and skips null-storage-key rows (no MinIO job needed), while `deletePhotosBatch()` deletes all rows by ID regardless of `storage_key`. Adding a `storage_key IS NOT NULL` filter would strand soft-deleted null-storage-key rows permanently — `purgeNullStorageKeyPhotos()` only handles `deleted_at IS NULL` rows.
 
 **Replace `photoRepository.deleteAllById(ids)` with batched delete:**
 ```java
@@ -329,10 +367,7 @@ authJdbc.update("DELETE FROM photos WHERE id = ANY(?)",
 
 **Replace enqueue call:** `photoDeleteJobEnqueuer.enqueueByRows(batch)` (before delete, same as existing ordering).
 
-**Replace `purgeNullStorageKeyPhotos()` jdbcTemplate → authJdbc:** The SQL CTE (`DELETE FROM photos ... UPDATE users ...`) is unchanged; only the template reference changes. Confirm `jpt_auth` has UPDATE on `users.used_bytes` — it currently has column-level UPDATE on `(password_hash, failed_login_attempts, locked_until, email_verified, oauth_provider, oauth_id, updated_at)`. `used_bytes` is **not** in this list. Add to V14 migration:
-```sql
-GRANT UPDATE (used_bytes) ON users TO jpt_auth;
-```
+**Replace `purgeNullStorageKeyPhotos()` jdbcTemplate → authJdbc:** The SQL CTE (`DELETE FROM photos ... UPDATE users ...`) is unchanged; only the template reference changes. `jpt_auth` currently has column-level UPDATE on `(password_hash, failed_login_attempts, locked_until, email_verified, oauth_provider, oauth_id, updated_at)` — `used_bytes` is **not** in this list. The V14 migration above (which grants `UPDATE (used_bytes) ON users TO jpt_auth`) covers this requirement.
 
 ---
 
@@ -354,12 +389,15 @@ The stream is replaced with a list. For very large deployments this loads all us
 // For each batch of up to ID_BATCH_SIZE UUIDs:
 UUID[] batchArray = batch.toArray(UUID[]::new);
 List<UUID> existing = authJdbc.query(
-    "SELECT id FROM photos WHERE id = ANY(?)",
-    (rs, rowNum) -> UUID.fromString(rs.getString("id")),
-    new Object[]{ batchArray },  // use PreparedStatementSetter for array param
-    ...);
+    con -> {
+        PreparedStatement ps = con.prepareStatement(
+            "SELECT id FROM photos WHERE id = ANY(?)");
+        ps.setArray(1, con.createArrayOf("uuid", batchArray));
+        return ps;
+    },
+    (rs, rowNum) -> UUID.fromString(rs.getString("id")));
 ```
-Use `PreparedStatement.setArray(1, connection.createArrayOf("uuid", batchArray))` via a `PreparedStatementSetter`. Partitioning into `ID_BATCH_SIZE = 1000` chunks is preserved.
+Use `PreparedStatementCreator` (lambda) to set the PostgreSQL `uuid[]` array parameter — this is the correct `JdbcTemplate.query(PreparedStatementCreator, RowMapper)` overload. Partitioning into `ID_BATCH_SIZE = 1000` chunks is preserved.
 
 ---
 
@@ -485,9 +523,45 @@ WHERE k.user_id = :userId
 
 ### D4 — `@Transactional` on `PhotoController` methods
 
-**Root cause:** `addKeywordToPhoto` and `removeKeywordFromPhoto` in `PhotoController` carry `@Transactional`. The transaction opens at the controller layer — currently safe due to `@Order` values, but fragile if ordering changes.
+**Root cause:** `addKeywordToPhoto` and `removeKeywordFromPhoto` in `PhotoController` carry `@Transactional` (lines 124 and 146). The transaction opens at the controller layer — currently safe due to `@Order` values, but fragile if ordering changes. The keyword assignment logic (ownership validation + `photoKeywordRepository` save/delete) lives entirely in the controller; there are no corresponding `PhotoService` methods yet.
 
-**Fix:** Remove `@Transactional` from both `PhotoController` methods. Add `@Transactional` to the corresponding methods in `PhotoService` (or whichever service handles keyword assignment for photos). Transaction boundary moves to the service layer where `RlsAspect` has already run — standard Spring layering.
+**Fix:** Extract the keyword-assignment logic into two new `@Transactional` methods in `PhotoService`, then simplify the controller to delegate:
+
+**New `PhotoService` methods** (inject `PhotoKeywordRepository` and `KeywordRepository` into `PhotoService`):
+
+```java
+@Transactional
+public void addKeywordToPhoto(UUID userId, UUID photoId, UUID keywordId) {
+    // Validate photo ownership (reuses existing getPhoto)
+    getPhoto(userId, photoId);
+    // Validate keyword ownership
+    Keyword keyword = keywordRepository.findById(keywordId)
+        .orElseThrow(() -> new EntityNotFoundException("Keyword not found"));
+    if (!keyword.getUserId().equals(userId)) {
+        throw new EntityNotFoundException("Keyword not found");
+    }
+    PhotoKeyword pk = new PhotoKeyword();
+    pk.setPhotoId(photoId);
+    pk.setKeywordId(keywordId);
+    pk.setUserId(userId);
+    photoKeywordRepository.save(pk);
+}
+
+@Transactional
+public void removeKeywordFromPhoto(UUID userId, UUID photoId, UUID keywordId) {
+    // Validate photo ownership
+    getPhoto(userId, photoId);
+    photoKeywordRepository.deleteByPhotoIdAndKeywordIdAndUserId(photoId, keywordId, userId);
+}
+```
+
+**`PhotoController` changes:**
+- Remove `@Transactional` from `addKeywordToPhoto` and `removeKeywordFromPhoto`.
+- Remove the inline ownership-validation + `photoKeywordRepository` calls from both methods.
+- Replace each method body with a single delegate call: `photoService.addKeywordToPhoto(userId, id, keywordId)` / `photoService.removeKeywordFromPhoto(userId, id, keywordId)`.
+- Remove `photoKeywordRepository` and `keywordRepository` from `PhotoController` constructor/fields (they are no longer needed by the controller after this refactor; `listKeywordsForPhoto` still uses them — keep those two fields only if `listKeywordsForPhoto` is not also being moved, which it is not in this fix).
+
+> **Note:** `listKeywordsForPhoto` in `PhotoController` also uses `photoKeywordRepository` and `keywordRepository` directly and is not being moved in this fix. Therefore `PhotoController` retains both repository fields; only the two `@Transactional` annotations are removed from the controller.
 
 ---
 
