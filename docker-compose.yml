@@ -1,7 +1,7 @@
 services:
   nginx:
     image: nginx:alpine
-    ports: ["80:80", "443:443"]
+    ports: ["127.0.0.1:8080:80"]
     volumes:
       - ./react-build:/usr/share/nginx/html:ro
       - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
