@@ -1,0 +1,73 @@
+name: Deploy
+on:
+  workflow_run:
+    workflows: ["CI"]  # M28 fix — gate deploy on CI (including Trivy security scanning) passing
+    branches: [master]
+    types: [completed]
+
+jobs:
+  build:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}  # M28 fix — only deploy if CI passed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: 21, distribution: temurin }
+      - run: ./gradlew build  # includes tests via Gradle dependency graph (M18 fix)
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: cd frontend && npm ci && npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup SSH keys (C11 fix, SA-P5-2 F2 fix, SA-P5-3 F7 fix — pinned host key, no ssh-keyscan)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_HOST_KEY }}" >> ~/.ssh/known_hosts
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "${{ secrets.DEPLOY_RSYNC_KEY }}" > ~/.ssh/deploy_rsync_key
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/deploy_rsync_key
+      - name: Tag current images for rollback (C8 fix)
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} tag-previous
+      - name: Rsync source to VPS (C13, SA-F7 fix, SA-P5-2 F2 fix — rrsync-restricted key, exclude production-managed files)
+        run: |
+          rsync -avz --delete \
+            --exclude='.env' \
+            --exclude='secrets/' \
+            --exclude='alertmanager.yml' \
+            --exclude='certbot/' \
+            --exclude='deploy.sh' \
+            -e "ssh -i ~/.ssh/deploy_rsync_key" \
+            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/jpt/
+      - name: Build images and deploy on VPS (C12 fix)
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} build
+
+  healthcheck:
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    steps:
+      - name: Setup SSH key (C11 fix, SA-P5-3 F7 fix — pinned host key)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_HOST_KEY }}" >> ~/.ssh/known_hosts
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Wait for healthy deployment (C14 fix)
+        run: |
+          for i in $(seq 1 12); do
+            ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} healthcheck && exit 0
+            sleep 5
+          done
+          exit 1
+      - name: Rollback on failure (C8, M30, SA-F12 fix)
+        # SA-P5-3 F8: NOTE — This restores previous Docker images but does NOT revert
+        # database migrations. If the deploy included destructive schema changes,
+        # manual database intervention may be required after rollback.
+        if: failure()
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} rollback

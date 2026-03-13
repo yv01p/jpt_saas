@@ -1,0 +1,28 @@
+# CI override — removes non-essential services and uses HTTP-only nginx (M20, M24, C21 fix)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+services:
+  nginx:
+    volumes:
+      - ./nginx.ci.conf:/etc/nginx/nginx.conf:ro
+      - ./react-build:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+
+  # Remove services not needed for E2E testing by assigning an inactive profile
+  backup:
+    profiles: [production-only]
+
+  pgbackup:
+    profiles: [production-only]
+
+  certbot:
+    profiles: [production-only]
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    networks:
+      - backend
+    ports:
+      - "8025:8025"
+    mem_limit: 64m
+    cpus: '0.25'
