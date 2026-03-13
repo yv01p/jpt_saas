@@ -383,6 +383,7 @@ services:
     environment:
       REDIS_ADDR: redis://redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_EXPORTER_CHECK_STREAMS: "photo-jobs"
     networks:
       - backend
     depends_on:
