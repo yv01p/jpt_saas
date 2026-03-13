@@ -11,6 +11,7 @@ import AlbumsPage from './pages/AlbumsPage';
 import SearchPage from './pages/SearchPage';
 import TrashPage from './pages/TrashPage';
 import SettingsPage from './pages/SettingsPage';
+import SharePage from './pages/SharePage';
 
 function PhotoPageRoute() {
   const { id } = useParams<{ id: string }>();
@@ -33,6 +34,7 @@ function App() {
         <Routes>
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/share/:token" element={<SharePage />} />
           <Route path="/library"  element={<ProtectedRoute><LibraryPage /></ProtectedRoute>} />
           <Route path="/photo/:id" element={<ProtectedRoute><PhotoPageRoute /></ProtectedRoute>} />
           <Route path="/keywords" element={<ProtectedRoute><KeywordsPage /></ProtectedRoute>} />

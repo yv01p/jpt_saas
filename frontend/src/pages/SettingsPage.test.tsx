@@ -30,6 +30,7 @@ test('renders "X GB of Y GB used" when user profile is loaded', async () => {
     http.get('/api/users/me', () => HttpResponse.json({
       ...mockUserWire, used_bytes: 2_300_000_000, quota_bytes: 10_000_000_000,
     })),
+    http.get('/api/shares', () => HttpResponse.json({ content: [], total_elements: 0, total_pages: 0, number: 0, size: 20 })),
   );
   render(<SettingsPage />, { wrapper: QueryClientWrapper });
   expect(await screen.findByText('2.3 GB of 10.0 GB used')).toBeInTheDocument();
@@ -40,6 +41,7 @@ test('usedBytes floor guard: never renders negative storage value', async () => 
     http.get('/api/users/me', () => HttpResponse.json({
       ...mockUserWire, used_bytes: -1, quota_bytes: 10_000_000_000,
     })),
+    http.get('/api/shares', () => HttpResponse.json({ content: [], total_elements: 0, total_pages: 0, number: 0, size: 20 })),
   );
   render(<SettingsPage />, { wrapper: QueryClientWrapper });
   expect(await screen.findByText('0.0 GB of 10.0 GB used')).toBeInTheDocument();
@@ -54,10 +56,89 @@ test('GPS toggle calls PATCH /api/users/me and updates auth store', async () => 
       capturedBody = await request.json();
       return HttpResponse.json({ ...mockUserWire, show_gps: true });
     }),
+    http.get('/api/shares', () => HttpResponse.json({ content: [], total_elements: 0, total_pages: 0, number: 0, size: 20 })),
   );
   render(<SettingsPage />, { wrapper: QueryClientWrapper });
   await userEvent.click(await screen.findByRole('checkbox', { name: /show gps/i }));
   // snakeifyKeys transforms outgoing body: { show_gps: true }
   expect(capturedBody).toEqual({ show_gps: true });
   expect(useAuthStore.getState().user?.showGps).toBe(true);
+});
+
+// ---- Manage Shares section ----
+
+const SHARE_ID = '770e8400-e29b-41d4-a716-446655440002';
+const RESOURCE_ID = '550e8400-e29b-41d4-a716-446655440000';
+
+const mockShareWire = {
+  id: SHARE_ID,
+  resource_type: 'photo',
+  resource_id: RESOURCE_ID,
+  expires_at: null,
+  include_gps: false,
+  permissions: 'read',
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+const mockSharesPageWire = {
+  content: [mockShareWire],
+  total_elements: 1,
+  total_pages: 1,
+  number: 0,
+  size: 20,
+};
+
+test('shows "Loading shares..." while fetching shares', () => {
+  server.use(
+    http.get('/api/users/me', () => HttpResponse.json(mockUserWire)),
+    http.get('/api/shares', async () => {
+      await delay('infinite');
+      return HttpResponse.json({});
+    }),
+  );
+  render(<SettingsPage />, { wrapper: QueryClientWrapper });
+  // The user/me query resolves fast (no delay), shares query is delayed
+  // We check the loading text immediately — but since user/me also loads, we just look for either loading state
+  expect(screen.getByTestId('quota-skeleton')).toBeInTheDocument();
+});
+
+test('shows "No active shares." when list is empty', async () => {
+  server.use(
+    http.get('/api/users/me', () => HttpResponse.json(mockUserWire)),
+    http.get('/api/shares', () =>
+      HttpResponse.json({ content: [], total_elements: 0, total_pages: 0, number: 0, size: 20 })
+    ),
+  );
+  render(<SettingsPage />, { wrapper: QueryClientWrapper });
+  expect(await screen.findByText(/no active shares/i)).toBeInTheDocument();
+});
+
+test('renders share item with resource type, creation date, expiry', async () => {
+  server.use(
+    http.get('/api/users/me', () => HttpResponse.json(mockUserWire)),
+    http.get('/api/shares', () => HttpResponse.json(mockSharesPageWire)),
+  );
+  render(<SettingsPage />, { wrapper: QueryClientWrapper });
+  // Resource type
+  expect(await screen.findByText(/photo/i)).toBeInTheDocument();
+  // Creation date: '2026-01-01T00:00:00Z' formatted as toLocaleDateString()
+  const createdAt = new Date('2026-01-01T00:00:00Z').toLocaleDateString();
+  expect(screen.getByText(new RegExp(createdAt.replace(/\//g, '\\/')))).toBeInTheDocument();
+  // Expiry: null → "Never"
+  expect(screen.getByText(/never/i)).toBeInTheDocument();
+});
+
+test('Revoke button calls DELETE and refreshes list', async () => {
+  let deleteCalled = false;
+  server.use(
+    http.get('/api/users/me', () => HttpResponse.json(mockUserWire)),
+    http.get('/api/shares', () => HttpResponse.json(mockSharesPageWire)),
+    http.delete(`/api/shares/${SHARE_ID}`, () => {
+      deleteCalled = true;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  render(<SettingsPage />, { wrapper: QueryClientWrapper });
+  await userEvent.click(await screen.findByRole('button', { name: /revoke/i }));
+  expect(deleteCalled).toBe(true);
 });

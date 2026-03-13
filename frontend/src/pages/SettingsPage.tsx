@@ -1,7 +1,54 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
-import type { User } from '../api/types';
+import type { User, ShareToken } from '../api/types';
 import useAuthStore from '../stores/authStore';
+
+interface SharesPage {
+  content: ShareToken[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+}
+
+function ManageSharesSection() {
+  const queryClient = useQueryClient();
+
+  const { data: sharesPage, isLoading: sharesLoading } = useQuery<SharesPage>({
+    queryKey: ['shares'],
+    queryFn: () => apiFetch<SharesPage>('/api/shares'),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<void>(`/api/shares/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shares'] });
+    },
+  });
+
+  if (sharesLoading) return <p>Loading shares...</p>;
+
+  const shares = sharesPage?.content ?? [];
+
+  if (shares.length === 0) return <p>No active shares.</p>;
+
+  return (
+    <ul>
+      {shares.map((share) => (
+        <li key={share.id}>
+          <span>{share.resourceType}</span>
+          {' — '}
+          <span>{new Date(share.createdAt).toLocaleDateString()}</span>
+          {' — Expires: '}
+          <span>{share.expiresAt ? new Date(share.expiresAt).toLocaleDateString() : 'Never'}</span>
+          {' '}
+          <button onClick={() => revokeMutation.mutate(share.id)}>Revoke</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -55,6 +102,11 @@ export default function SettingsPage() {
           />
           Show GPS
         </label>
+      </section>
+
+      <section>
+        <h2>Manage Shares</h2>
+        <ManageSharesSection />
       </section>
     </div>
   );

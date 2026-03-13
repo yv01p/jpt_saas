@@ -52,9 +52,14 @@ export interface Keyword {
 }
 
 export interface ShareToken {
+  id: string;
   token: string;
-  photoId: string;
+  resourceType: 'photo' | 'album';
+  resourceId: string;
   expiresAt: string | null;
+  includeGps: boolean;
+  permissions: string;
+  createdAt: string;
 }
 
 export interface SearchResult {
