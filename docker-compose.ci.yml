@@ -18,6 +18,21 @@ services:
   certbot:
     profiles: [production-only]
 
+  alertmanager:
+    profiles: [production-only]
+
+  prometheus:
+    profiles: [production-only]
+
+  grafana:
+    profiles: [production-only]
+
+  node-exporter:
+    profiles: [production-only]
+
+  redis-exporter:
+    profiles: [production-only]
+
   mailpit:
     image: axllent/mailpit:v1.21
     networks:
@@ -26,3 +41,9 @@ services:
       - "8025:8025"
     mem_limit: 64m
     cpus: '0.25'
+
+secrets:
+  restic_pass:
+    file: /dev/null
+  smtp_alert_password:
+    file: /dev/null
