@@ -1,0 +1,39 @@
+# alert_rules.yml
+groups:
+  - name: jpt_alerts
+    rules:
+      - alert: DiskUsageHigh
+        expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VPS disk usage above 80%"
+          description: "Disk usage is {{ humanizePercentage $value }} on {{ $labels.instance }}"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage above 80%"
+          description: "Redis memory usage is {{ humanizePercentage $value }}"
+
+      - alert: RedisStreamsPendingHigh
+        expr: redis_stream_length{stream="photo-jobs"} > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis Streams pending jobs above 50 for 10 minutes"
+          description: "{{ $value }} jobs pending in photo-jobs stream"
+
+      - alert: ApiErrorRateHigh
+        expr: sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) / sum(rate(http_server_requests_seconds_count[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx error rate above 1%"
+          description: "5xx error rate is {{ humanizePercentage $value }}"

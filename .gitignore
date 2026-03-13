@@ -127,3 +127,4 @@ react-build/
 frontend/.env.development
 frontend/.env*.local
 frontend/dist/
+alertmanager.yml
