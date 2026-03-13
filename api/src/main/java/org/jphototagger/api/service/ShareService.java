@@ -160,8 +160,8 @@ public class ShareService {
             }
             return objectMapper.writeValueAsString(stripped);
         } catch (JsonProcessingException e) {
-            log.warn("Failed to parse EXIF JSON for GPS stripping, returning as-is", e);
-            return exifJson;
+            log.warn("Failed to parse EXIF JSON for GPS stripping, returning null to prevent GPS data leak", e);
+            return null;
         }
     }
 

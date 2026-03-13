@@ -2,6 +2,8 @@ package org.jphototagger.api.controller;
 
 import jakarta.validation.Valid;
 import org.jphototagger.api.dto.CreateShareRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.jphototagger.api.dto.ShareResponse;
 import org.jphototagger.api.entity.Share;
 import org.jphototagger.api.repository.ShareLookupRepository;
@@ -32,6 +34,8 @@ import java.util.UUID;
  */
 @RestController
 public class ShareController {
+
+    private static final Logger log = LoggerFactory.getLogger(ShareController.class);
 
     private final ShareService shareService;
     private final ShareLookupRepository shareLookupRepository;
@@ -108,14 +112,20 @@ public class ShareController {
             Object storageKey = photo.get("storage_key");
             if (storageKey != null) {
                 String key = storageKey.toString();
-                // Extract userId from storage key (format: {userId}/originals/{photoId}.{ext})
-                String[] parts = key.split("/");
-                if (parts.length >= 2) {
-                    UUID photoOwnerId = UUID.fromString(parts[0]);
-                    UUID photoId = UUID.fromString(parts[2].replaceAll("\\.[^.]+$", ""));
-                    photo.put("thumbnailUrl", storageService.generateThumbnailPresignedUrl(
-                            storageService.thumbnailSmKey(photoOwnerId, photoId)));
-                    photo.put("originalUrl", storageService.generateOriginalPresignedUrl(key));
+                // Extract userId and photoId from storage key (format: {userId}/originals/{photoId}.{ext})
+                try {
+                    String[] parts = key.split("/");
+                    if (parts.length >= 3) {
+                        UUID photoOwnerId = UUID.fromString(parts[0]);
+                        UUID photoId = UUID.fromString(parts[2].replaceAll("\\.[^.]+$", ""));
+                        photo.put("thumbnailUrl", storageService.generateThumbnailPresignedUrl(
+                                storageService.thumbnailSmKey(photoOwnerId, photoId)));
+                        photo.put("originalUrl", storageService.generateOriginalPresignedUrl(key));
+                    } else {
+                        log.warn("Storage key has unexpected format, skipping URL generation: {}", key);
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("Failed to parse storage key for URL generation, skipping: {}", key, e);
                 }
             }
 

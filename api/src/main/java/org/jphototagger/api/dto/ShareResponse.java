@@ -1,5 +1,6 @@
 package org.jphototagger.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -8,6 +9,7 @@ public class ShareResponse {
     private UUID id;
     private String resourceType;
     private UUID resourceId;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private String token; // Only present in create response
     private Instant expiresAt;
     private String permissions;
