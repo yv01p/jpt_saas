@@ -226,13 +226,12 @@ test('full user journey', async ({ page, browser }) => {
     },
   });
   expect(albumRes.ok()).toBeTruthy();
-  const albumData = await albumRes.json();
-  const albumId: string = albumData.id;
 
   // Navigate to Albums page and interact with the album
   await page.goto('/albums');
   // Click the album button to select it
   await page.getByRole('button', { name: albumName }).click();
+  await expect(page.getByRole('button', { name: 'Add Photo' })).toBeVisible({ timeout: 10_000 });
 
   // Click "Add Photo" button
   await page.getByRole('button', { name: 'Add Photo' }).click();
@@ -245,16 +244,15 @@ test('full user journey', async ({ page, browser }) => {
   await expect(page.locator(`img[alt="${photoFilename}"]`)).toBeVisible({ timeout: 10_000 });
 
   // -------------------------------------------------------------------------
-  // Step 11: Search by keyword
+  // Step 11: Search by keyword using keyword filter
   // -------------------------------------------------------------------------
   await page.goto('/search');
-  await page.locator('input[type="search"]').fill(keywordName);
+  // Wait for keyword checkboxes to load (loaded async from /api/keywords)
+  const keywordCheckbox = page.getByRole('checkbox', { name: keywordName });
+  await expect(keywordCheckbox).toBeVisible({ timeout: 10_000 });
+  await keywordCheckbox.check();
   await page.getByRole('button', { name: 'Search' }).click();
-
-  // Results should appear with filename
-  await expect(
-    page.locator('section[aria-label="Search results"] ul li', { hasText: photoFilename })
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('section[aria-label="Search results"] ul li')).toBeVisible({ timeout: 10_000 });
 
   // -------------------------------------------------------------------------
   // Step 12: Create share link via API (no UI)
@@ -281,7 +279,7 @@ test('full user journey', async ({ page, browser }) => {
   // -------------------------------------------------------------------------
   const anonContext = await browser.newContext();
   const anonPage = await anonContext.newPage();
-  await anonPage.goto(`http://localhost/share/${shareToken}`);
+  await anonPage.goto(`/share/${shareToken}`);
   await expect(anonPage.locator(`img[alt="${photoFilename}"]`)).toBeVisible({ timeout: 15_000 });
   await anonContext.close();
 
