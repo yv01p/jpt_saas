@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Version:** 8.0
-**Last updated:** 2026-03-12
-**Reviews incorporated:** `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-1.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-2.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-3.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-4.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-5.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-6.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-1.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-2.md`
+**Version:** 9.0
+**Last updated:** 2026-03-13
+**Reviews incorporated:** `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-1.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-2.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-3.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-4.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-5.md`, `docs/plans/2026-02-25-saas-conversion-phase-5-critical-review-6.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-1.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-2.md`, `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-3.md`
 
 **Goal:** Convert JPhotoTagger from a single-user Java Swing desktop app into a multi-user web SaaS application per the approved design (docs/plans/2026-02-24-saas-conversion-design.md).
 
@@ -20,7 +20,13 @@
 
 ### Task 5.1: Share Token Service
 
-**Prerequisite 1:** Add `/share/**` to the public (unauthenticated) paths in `SecurityConfig.java`. This was intentionally removed in Phase 2 (v3.0, M3) to avoid exposing a 404 endpoint before the controller exists. It must be re-added here.
+**Prerequisite 1:** Add `/share/**` to the public (unauthenticated) paths in `SecurityConfig.java`. This was intentionally removed in Phase 2 (v3.0, M3) to avoid exposing a 404 endpoint before the controller exists. It must be re-added here. Additionally, add `/auth/verify` to the CSRF ignore list (SA-P5-3 F3 fix — the verification token is single-use, 256-bit secret, and serves as its own CSRF protection; this also enables non-SPA clients such as mobile apps or CLI):
+```java
+.ignoringRequestMatchers(
+    "/auth/refresh",    // refresh token in httpOnly cookie is proof of possession
+    "/auth/verify",     // SA-P5-3 F3: verification token is single-use 256-bit secret
+    "/login/oauth2/code/*");
+```
 
 **Prerequisite 2: Production EmailService (C22 fix, M31 fix, M33 fix)**
 
@@ -51,6 +57,7 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
    public class SimpleEmailService implements EmailService {
        @Autowired private JavaMailSender mailSender;
        @Value("${app.base-url}") private String baseUrl;
+       @Value("${app.email.from}") private String fromAddress;  // SA-P5-3 F10 fix
 
        @PostConstruct
        void validateBaseUrl() {
@@ -67,6 +74,7 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
        @Override
        public void sendVerificationEmail(String to, String token) {
            var msg = new SimpleMailMessage();
+           msg.setFrom(fromAddress);  // SA-P5-3 F10 fix — explicit From, not implicit spring.mail.username
            msg.setTo(to);
            msg.setSubject("Verify your email");
            msg.setText(UriComponentsBuilder.fromUriString(baseUrl)
@@ -79,6 +87,7 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
        @Override
        public void sendPasswordResetEmail(String to, String token) {
            var msg = new SimpleMailMessage();
+           msg.setFrom(fromAddress);  // SA-P5-3 F10 fix
            msg.setTo(to);
            msg.setSubject("Reset your password");
            msg.setText(UriComponentsBuilder.fromUriString(baseUrl)
@@ -94,9 +103,9 @@ No SMTP-capable `EmailService` exists in the codebase — only `StubEmailService
 
 5. Add `COOKIE_SECURE: ${COOKIE_SECURE:-true}` to the API service environment in `docker-compose.yml` (M33 fix — `application.yml` reads `${COOKIE_SECURE:true}` but the env var is not plumbed through docker-compose; in CI with HTTP-only nginx, the `Secure` cookie flag prevents Playwright from sending cookies, breaking all post-login E2E steps).
 
-6. Add to `.env.example`: `SMTP_PORT=587` and `COOKIE_SECURE=true`.
+6. Add to `.env.example`: `SMTP_PORT=587`, `COOKIE_SECURE=true`, and `EMAIL_FROM=noreply@yourdomain.com` (SA-P5-3 F10 fix).
 
-7. Add to `.env.ci`: `COOKIE_SECURE=false` (CI uses HTTP-only nginx).
+7. Add to `.env.ci`: `COOKIE_SECURE=false` (CI uses HTTP-only nginx) and `EMAIL_FROM=noreply@test.localhost` (SA-P5-3 F10 fix).
 
 8. Add a startup validation (SA-F8 fix) to reject known-weak JWT secrets in non-test environments (SA-P5-2 F3 fix — add clarifying comment; primary secret strength validation is enforced by `JwtService`'s 256-bit minimum):
    ```java
@@ -155,6 +164,24 @@ spring:
       share_reader_password: ${SHARE_READER_PASSWORD}
 ```
 
+Add explicit page size cap in `api/src/main/resources/application.yml` (SA-P5-3 F2 fix — do not rely on Spring Data's implicit `maxPageSize=2000` default):
+```yaml
+spring:
+  data:
+    web:
+      pageable:
+        max-page-size: 200
+```
+
+Add email `From` address configuration in `api/src/main/resources/application.yml` (SA-P5-3 F10 fix):
+```yaml
+app:
+  email:
+    from: ${EMAIL_FROM:noreply@yourdomain.com}
+```
+
+Add `EMAIL_FROM: ${EMAIL_FROM:noreply@yourdomain.com}` to the API service environment in `docker-compose.yml` (SA-P5-3 F10 fix).
+
 Add secondary DataSource configuration in `api/src/main/resources/application.yml`:
 ```yaml
 app:
@@ -186,6 +213,7 @@ Create `ShareReaderDataSourceConfig.java` that constructs the BYPASSRLS DataSour
            ds.setUsername(username);
            ds.setPassword(password);
            ds.setMaximumPoolSize(3);
+           ds.setConnectionInitSql("SET application_name = 'share_reader'");  // SA-P5-3 F1 — auditing in pg_stat_activity
            return new ShareLookupRepository(ds);
        }
    }
@@ -245,7 +273,17 @@ void shareReaderDataSource_onlyUsedByShareLookupRepository() { }  // SA-F1 fix �
 - `POST /shares` — create share (authenticated)
 - `GET /share/{token}` — public access (unauthenticated), uses RLS-bypassing DataSource
   - For photo shares: returns photo metadata and image URL
-  - For album shares: returns share metadata plus paginated photo list (`GET /share/{token}/photos?page=0&size=20`)
+  - For album shares: returns share metadata plus paginated photo list (`GET /share/{token}/photos?page=0&size=20`). The share endpoint must cap `Pageable` size to 50 (SA-P5-3 F2 fix — unauthenticated BYPASSRLS endpoint warrants a tighter limit than the global default):
+    ```java
+    @GetMapping("/share/{token}/photos")
+    public Page<PhotoDto> getSharedAlbumPhotos(
+            @PathVariable String token,
+            @PageableDefault(size = 20) Pageable pageable) {
+        int cappedSize = Math.min(pageable.getPageSize(), 50);
+        Pageable capped = PageRequest.of(pageable.getPageNumber(), cappedSize, pageable.getSort());
+        // ... use capped pageable for share lookup
+    }
+    ```
 - `DELETE /shares/{id}` — revoke share (authenticated)
 - `GET /shares?page=0&size=20` — list user's shares (authenticated, paginated via `Pageable`, consistent with all other list endpoints) (M14 fix)
 
@@ -688,6 +726,9 @@ SMTP_PORT=1025
 SMTP_USER=
 SMTP_PASS=
 
+# Email sender
+EMAIL_FROM=noreply@test.localhost  # SA-P5-3 F10 fix — MailPit accepts any From address
+
 # CI-specific overrides
 COOKIE_SECURE=false  # M33 fix — CI uses HTTP-only nginx, Secure cookies break Playwright
 ```
@@ -716,6 +757,10 @@ Before the first deploy, the VPS must be configured with:
                     docker tag jpt-worker:latest jpt-worker:previous 2>/dev/null || true ;;
      build)         docker compose build api worker && docker compose up -d ;;
      healthcheck)   docker compose exec -T api wget -qO- http://localhost:8080/actuator/health | grep -q UP ;;
+     # SA-P5-3 F8: WARNING — Database migrations are NOT rolled back. If the failed
+     # deploy included destructive schema changes (ALTER TABLE, DROP COLUMN, etc.),
+     # the previous images may fail against the new schema. Manual DB intervention
+     # required. Phase 5 migrations (V10) are additive and backward-compatible.
      rollback)      if docker image inspect jpt-api:previous >/dev/null 2>&1; then \
                         docker compose stop api worker && \
                         docker tag jpt-api:previous jpt-api:latest && \
@@ -731,6 +776,11 @@ Before the first deploy, the VPS must be configured with:
    ```bash
    chown root:root /opt/jpt/deploy.sh
    chmod 755 /opt/jpt/deploy.sh
+   ```
+   Restrict sensitive files on the VPS (SA-P5-3 F4 fix — defense-in-depth; `node-exporter` mounts `/` as read-only, so world-readable secrets would be exposed):
+   ```bash
+   chmod 600 /opt/jpt/.env /opt/jpt/secrets/*
+   chmod 700 /home/deploy/.ssh
    ```
 
 3. Two `authorized_keys` entries — one for commands, one for rsync file transfer (SA-P5-2 F2 fix — separate keys with distinct restrictions):
@@ -768,13 +818,13 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup SSH keys (C11 fix, SA-P5-2 F2 fix — separate keys for commands and rsync)
+      - name: Setup SSH keys (C11 fix, SA-P5-2 F2 fix, SA-P5-3 F7 fix — pinned host key, no ssh-keyscan)
         run: |
           mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_HOST_KEY }}" >> ~/.ssh/known_hosts
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           echo "${{ secrets.DEPLOY_RSYNC_KEY }}" > ~/.ssh/deploy_rsync_key
           chmod 600 ~/.ssh/deploy_key ~/.ssh/deploy_rsync_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
       - name: Tag current images for rollback (C8 fix)
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} tag-previous
@@ -796,12 +846,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy]
     steps:
-      - name: Setup SSH key (C11 fix)
+      - name: Setup SSH key (C11 fix, SA-P5-3 F7 fix — pinned host key)
         run: |
           mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_HOST_KEY }}" >> ~/.ssh/known_hosts
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
       - name: Wait for healthy deployment (C14 fix)
         run: |
           for i in $(seq 1 12); do
@@ -810,6 +860,9 @@ jobs:
           done
           exit 1
       - name: Rollback on failure (C8, M30, SA-F12 fix)
+        # SA-P5-3 F8: NOTE — This restores previous Docker images but does NOT revert
+        # database migrations. If the deploy included destructive schema changes,
+        # manual database intervention may be required after rollback.
         if: failure()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} rollback
@@ -819,6 +872,7 @@ jobs:
 - `DEPLOY_SSH_KEY` — private key for VPS command execution (restricted by `command="/opt/jpt/deploy.sh"` in `authorized_keys`)
 - `DEPLOY_RSYNC_KEY` — private key for VPS file transfer (restricted by `rrsync -wo /opt/jpt/` in `authorized_keys`) (SA-P5-2 F2 fix)
 - `VPS_HOST` — target server hostname
+- `VPS_HOST_KEY` — VPS SSH host key for known_hosts (SA-P5-3 F7 fix — generate with: `ssh-keyscan -H <vps-host>`, store as secret to eliminate MITM risk on every deploy)
 - `VPS_USER` — deploy user on VPS (dedicated user with minimal permissions, no sudo)
 
 **Step 3: Commit**
@@ -907,6 +961,22 @@ git commit -m "test: full E2E journey — register through share and trash"
 ---
 
 ## Changelog
+
+### v9.0 (2026-03-13) — Security Audit #3 Remediation
+
+**Review:** `docs/plans/2026-03-12-saas-conversion-phase-5-security-audit-3.md`
+
+**Security audit findings fixed (SA-P5-3):**
+- **SA-P5-3 F1** (Task 5.1): Added `connectionInitSql("SET application_name = 'share_reader'")` to `ShareReaderDataSourceConfig` HikariCP pool — enables auditing share_reader connections in `pg_stat_activity`. Defense-in-depth note, no security risk.
+- **SA-P5-3 F2** (Task 5.1): Added explicit `spring.data.web.pageable.max-page-size: 200` to `application.yml` (eliminates implicit dependency on Spring Data's default `maxPageSize=2000`). Added share-specific page size cap of 50 in `ShareController` for the unauthenticated BYPASSRLS album share endpoint, with `Math.min(pageable.getPageSize(), 50)`.
+- **SA-P5-3 F3** (Task 5.1): Added `/auth/verify` to CSRF ignore list in `SecurityConfig`. The verification token is single-use, 256-bit secret, and serves as its own CSRF protection. This also enables non-SPA clients (mobile apps, CLI) and removes fragile dependency on SPA load order for CSRF cookie.
+- **SA-P5-3 F4** (Task 5.5): Added VPS file permissions hardening note — `chmod 600` for `.env` and `secrets/*`, `chmod 700` for `.ssh`. Defense-in-depth: `node-exporter` mounts `/` as read-only, so world-readable secrets on the host would be exposed.
+- **SA-P5-3 F5** (Task 5.4): Accepted — redis-exporter env var credential pattern is consistent with all other services. No changes needed.
+- **SA-P5-3 F6** (Task 5.5): Accepted — `nginx.ci.conf` CSP divergence already documented (M27, SA-P5-2 F10). No changes needed.
+- **SA-P5-3 F7** (Task 5.5): Replaced `ssh-keyscan` with pinned `VPS_HOST_KEY` GitHub secret in both deploy and healthcheck jobs. Eliminates MITM risk on every deploy — host key verified against pre-established value instead of fetched live. Added `VPS_HOST_KEY` to required GitHub secrets list.
+- **SA-P5-3 F8** (Task 5.5): Added rollback limitation warnings to both `deploy.sh` (rollback subcommand) and deploy workflow (rollback step). Database migrations are not rolled back — if a failed deploy included destructive schema changes, manual DB intervention is required. Phase 5 migrations (V10) are additive and backward-compatible.
+- **SA-P5-3 F9** (Task 5.1): Accepted — share token timing side-channel is impractical with 2^256 entropy, rate limiting, and identical 404 responses. No changes needed.
+- **SA-P5-3 F10** (Task 5.1): Added explicit `setFrom(fromAddress)` to both email methods in `SimpleEmailService`. Added `app.email.from` configuration property in `application.yml`, `EMAIL_FROM` env var in `docker-compose.yml`, `.env.example`, and `.env.ci`. Eliminates implicit dependency on `spring.mail.username` for From address.
 
 ### v8.0 (2026-03-12) — Security Audit #2 Remediation
 
