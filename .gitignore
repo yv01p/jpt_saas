@@ -128,3 +128,10 @@ frontend/.env.development
 frontend/.env*.local
 frontend/dist/
 alertmanager.yml
+
+# stray build/runtime artifacts (extracted jar, compiled classes, deps, test output)
+/com/
+/net/
+/META-INF/
+node_modules/
+test-results/
